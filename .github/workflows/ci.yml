@@ -101,7 +101,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
       - name: Build release
-        run: cargo build --release -p devit
+        run: cargo build --release -p devit-cli --bin devit
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

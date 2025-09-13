@@ -2,10 +2,15 @@
 # crates/cli/Cargo.toml
 # -----------------------------
 [package]
-name = "devit"
+name = "devit-cli"
 version = "0.2.0-rc.1"
 edition = "2021"
 
+## Conserver le nom du binaire `devit`
+## (sinon Cargo le renommerait en `devit-cli`)
+[[bin]]
+name = "devit"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }

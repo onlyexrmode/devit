@@ -426,30 +426,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "devit"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "devit-agent",
- "devit-common",
- "devit-sandbox",
- "devit-tools",
- "hex",
- "hmac",
- "rand",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
- "walkdir",
-]
-
-[[package]]
 name = "devit-agent"
 version = "0.1.0"
 dependencies = [
@@ -474,6 +450,30 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
+]
+
+[[package]]
+name = "devit-cli"
+version = "0.2.0-rc.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "devit-agent",
+ "devit-common",
+ "devit-sandbox",
+ "devit-tools",
+ "hex",
+ "hmac",
+ "rand",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "walkdir",
 ]
 
 [[package]]

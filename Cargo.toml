@@ -1,6 +1,7 @@
 # -----------------------------
 # Top-level Cargo.toml (workspace)
 # -----------------------------
+
 [workspace]
 members = [
     "crates/cli",

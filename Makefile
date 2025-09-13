@@ -1,9 +1,11 @@
+
 .ONESHELL:
 SHELL := bash
 
 # Package/binary names for CLI (override via env if needed)
 # Keep binary name `devit`; package is the CLI crate name.
-DEVIT_PKG ?= devit
+TAG ?= v0.2.0-rc.1
+DEVIT_PKG ?= devit-cli
 DEVIT_BIN ?= devit
 
 .PHONY: fmt fmt-check fmt-fix clippy lint test test-cli build build-release smoke ci check verify help \
@@ -42,10 +44,10 @@ smoke:
 	./scripts/prepush-smoketest.sh
 
 plan:
-	cargo run -p devit -- plan
+	cargo run -p $(DEVIT_PKG) -- plan
 
 watch:
-	cargo run -p devit -- watch
+	cargo run -p $(DEVIT_PKG) -- watch
 
 bench-ids50:
 	# Ensure Python deps
@@ -109,6 +111,24 @@ check: fmt-check clippy
 verify: check build test
 
 ci: verify
+
+.PHONY: release-draft release-publish
+release-draft:
+	@if ! command -v gh >/dev/null 2>&1; then \
+	  echo "error: GitHub CLI 'gh' non trouvé. Installe-le puis authentifie-toi (gh auth login)"; exit 2; \
+	fi
+	chmod +x scripts/extract_release_notes.sh
+	scripts/extract_release_notes.sh "$(TAG)" > /tmp/devit_release_notes.md
+	gh release create "$(TAG)" --draft -F /tmp/devit_release_notes.md || \
+	  gh release edit   "$(TAG)" --draft -F /tmp/devit_release_notes.md
+	@echo "Draft créée/mise à jour pour $(TAG)"
+
+release-publish:
+	@if ! command -v gh >/dev/null 2>&1; then \
+	  echo "error: GitHub CLI 'gh' non trouvé. Installe-le puis authentifie-toi (gh auth login)"; exit 2; \
+	fi
+	gh release edit "$(TAG)" --draft=false
+	@echo "Release publiée pour $(TAG)"
 
 # ===== CLI-focused targets (safe, no side effects) =====
 build-cli:
