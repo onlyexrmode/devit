@@ -1,0 +1,20 @@
+
+
+# -----------------------------
+# crates/agent/Cargo.toml
+# -----------------------------
+[package]
+name = "devit-agent"
+version = "0.1.0"
+edition = "2021"
+
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+devit-common = { path = "../common" }
+devit-backend-openai = { path = "../backends/openai_like" }
+devit-tools = { path = "../tools" }

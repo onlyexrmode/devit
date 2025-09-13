@@ -1,0 +1,27 @@
+# -----------------------------
+# devit.toml (runtime config)
+# -----------------------------
+[backend]
+# One of: openai_like | ollama | llama_cpp
+# For MVP we map all to an OpenAI-compatible endpoint
+kind = "openai_like"
+base_url = "http://localhost:11434/v1" # Ollama OpenAI-compatible proxy
+model = "llama3.1:8b"
+api_key = "" # optional for local
+
+
+[policy]
+approval = "on-failure" # untrusted | on-failure | on-request | never
+sandbox = "workspace-write" # read-only | workspace-write | danger-full-access
+
+
+[sandbox]
+cpu_limit = 2
+mem_limit_mb = 2048
+net = "off"
+
+
+[git]
+conventional = true
+max_staged_files = 50
+

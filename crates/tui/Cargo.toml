@@ -1,0 +1,13 @@
+# -----------------------------
+# crates/tui/Cargo.toml
+# -----------------------------
+[package]
+name = "devit-tui"
+version = "0.1.0"
+edition = "2021"
+
+
+[dependencies]
+anyhow = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
