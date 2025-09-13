@@ -53,7 +53,7 @@ pub fn run_tests_with_output() -> Result<(i32, String)> {
                 .stderr(Stdio::piped())
                 .output()?;
             let txt = String::from_utf8_lossy(&out.stdout).to_string()
-                + &String::from_utf8_lossy(&out.stderr).to_string();
+                + String::from_utf8_lossy(&out.stderr).as_ref();
             Ok((out.status.code().unwrap_or(-1), txt))
         }
         Stack::Npm => {
@@ -63,7 +63,7 @@ pub fn run_tests_with_output() -> Result<(i32, String)> {
                 .stderr(Stdio::piped())
                 .output()?;
             let txt = String::from_utf8_lossy(&out.stdout).to_string()
-                + &String::from_utf8_lossy(&out.stderr).to_string();
+                + String::from_utf8_lossy(&out.stderr).as_ref();
             Ok((out.status.code().unwrap_or(-1), txt))
         }
         Stack::CMake => {
@@ -73,7 +73,7 @@ pub fn run_tests_with_output() -> Result<(i32, String)> {
                 .stderr(Stdio::piped())
                 .output()?;
             let txt = String::from_utf8_lossy(&out.stdout).to_string()
-                + &String::from_utf8_lossy(&out.stderr).to_string();
+                + String::from_utf8_lossy(&out.stderr).as_ref();
             Ok((out.status.code().unwrap_or(-1), txt))
         }
         Stack::Unknown => Err(anyhow!("Stack inconnue")),

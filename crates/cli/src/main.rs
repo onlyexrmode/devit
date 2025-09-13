@@ -181,7 +181,8 @@ async fn main() -> Result<()> {
         }) => {
             // OnRequest: aucune action automatique; nécessite --yes
             { let eff = cfg.policy.approvals.as_ref().and_then(|m| m.get("git").map(|s| s.to_ascii_lowercase())).unwrap_or_else(|| cfg.policy.approval.to_ascii_lowercase()); if eff == "on-request" && !yes {
-                anyhow::bail!("`devit run` nécessite --yes lorsque policy.approval=on-request"); } }
+                eprintln!("`devit run` nécessite --yes lorsque policy.approval=on-request");
+                anyhow::bail!("nécessite --yes"); } }
             if cfg.policy.sandbox.to_lowercase() == "read-only" {
                 anyhow::bail!(
                     "policy.sandbox=read-only: run/apply refusé (aucune écriture autorisée)"
@@ -484,7 +485,7 @@ fn build_context_index(root: &str) -> Result<PathBuf> {
         "files": files,
     });
     let mut f = fs::File::create(&out)?;
-    write!(f, "{}\n", serde_json::to_string_pretty(&obj)?)?;
+    writeln!(f, "{}", serde_json::to_string_pretty(&obj)?)?;
     Ok(out)
 }
 

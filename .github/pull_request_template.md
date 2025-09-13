@@ -1,19 +1,26 @@
-# .github/pull_request_template.md
-## Résumé
-Que change cette PR ? Pourquoi ?
+## Type / Scope
+- Type (Conventional): feat | fix | chore | docs | test | refactor
+- Scope (optionnel): ex. `cli`, `sandbox`, `tools`
 
-## Type
-- [ ] feat
-- [ ] fix
-- [ ] chore/docs/test/refactor
+## Description courte
+Brève synthèse: quoi et pourquoi en 2–3 lignes.
 
-## Tests
-Commandes exécutées, résultats :
+## Impact CLI / Sandbox / Approvals / Timeouts
+- CLI (flags/commandes ajoutées/modifiées):
+- Sandbox (comportement, safe‑list, net):
+- Approvals (règles, prompts):
+- Timeouts (valeur, où l’appliquer):
 
-## Sécurité / Sandbox / Approvals
-- [ ] Respect `approval` & `sandbox`
-- [ ] Logs d’audit si action sensible
+## Risques & Plan de rollback
+- Risques identifiés:
+- Plan de rollback (commande ou revert simples):
 
-## Notes
-Liens issues, breaking change éventuelle.
+## Étapes de test (commandes exactes)
+1. …
+2. …
+3. …
 
+## Checklist
+- [ ] cargo fmt --all -- --check
+- [ ] cargo clippy --workspace --all-targets -- -D warnings
+- [ ] cargo test --workspace --all-targets --no-fail-fast

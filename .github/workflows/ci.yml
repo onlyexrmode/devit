@@ -17,6 +17,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -54,10 +56,35 @@ jobs:
       - name: build
         run: cargo build --workspace --all-targets
 
-      - name: test
+      - name: validate commit messages (PR only)
+        if: github.event_name == 'pull_request'
         run: |
-          cargo test -p devit-common
-          cargo test -p devit --tests || true # integration tests may require network; allow failure
+          set -euo pipefail
+          BASE="origin/${GITHUB_BASE_REF}"
+          git fetch origin "${GITHUB_BASE_REF}:${GITHUB_BASE_REF}" --depth=200 || true
+          echo "Checking commit messages between $BASE..HEAD"
+          bad=0
+          while read -r subject; do
+            # Allow merge and revert commits
+            if [[ "$subject" =~ ^Merge\ .* || "$subject" =~ ^Revert\ .* ]]; then
+              continue
+            fi
+            if [[ ! "$subject" =~ ^(feat|fix|chore|docs|test|refactor)(\(.*\))?:\ .{1,72}$ ]]; then
+              echo "Invalid commit subject: $subject" >&2
+              bad=1
+            fi
+          done < <(git log --format=%s "$BASE"..HEAD)
+          if [ "$bad" -ne 0 ]; then
+            echo "Commit messages must follow Conventional Commits and ≤72 chars" >&2
+            exit 1
+          fi
+
+      - name: test (workspace, no-fail-fast)
+        env:
+          DEVIT_TIMEOUT_SECS: 300
+        run: |
+          set -euo pipefail
+          timeout "${DEVIT_TIMEOUT_SECS}s" cargo test --workspace --all-targets --no-fail-fast
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

@@ -45,7 +45,7 @@ fn enforce_policy(cmd: &str, policy: &PolicyCfg, sb: &SandboxCfg) -> Result<()> 
             return Err(anyhow!(format!(
                 "sandbox: binaire non autorisé: {bin}")));
         }
-        if sb.net.to_ascii_lowercase() == "off" && netblk.contains(&bin) {
+        if sb.net.eq_ignore_ascii_case("off") && netblk.contains(&bin) {
             return Err(anyhow!(format!(
                 "sandbox: réseau interdit, commande bloquée: {bin}")));
         }
@@ -82,7 +82,7 @@ pub fn run_shell_sandboxed(cmd: &str, policy: &PolicyCfg, sb: &SandboxCfg) -> Re
         c
     };
     // Best-effort disable proxies when net=off
-    if sb.net.to_ascii_lowercase() == "off" {
+    if sb.net.eq_ignore_ascii_case("off") {
         command.env_remove("http_proxy");
         command.env_remove("https_proxy");
         command.env_remove("HTTP_PROXY");
@@ -104,7 +104,7 @@ pub fn run_shell_sandboxed_capture(cmd: &str, policy: &PolicyCfg, sb: &SandboxCf
         c.args(["-lc", cmd]);
         c
     };
-    if sb.net.to_ascii_lowercase() == "off" {
+    if sb.net.eq_ignore_ascii_case("off") {
         command.env_remove("http_proxy");
         command.env_remove("https_proxy");
         command.env_remove("HTTP_PROXY");
@@ -114,6 +114,7 @@ pub fn run_shell_sandboxed_capture(cmd: &str, policy: &PolicyCfg, sb: &SandboxCf
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let out = command.output()?;
     let code = out.status.code().unwrap_or(-1);
-    let txt = String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr).to_string();
+    let txt = String::from_utf8_lossy(&out.stdout).to_string()
+        + String::from_utf8_lossy(&out.stderr).as_ref();
     Ok((code, txt))
 }
