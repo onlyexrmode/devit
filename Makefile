@@ -50,11 +50,11 @@ bench-smoke:
 	export DEVIT_TIMEOUT_SECS=120
 	python - <<-'PY'
 	from datasets import load_dataset
+	import os
 	ds = load_dataset('princeton-nlp/SWE-bench_Lite', split='test')
-	import os; os.makedirs('bench', exist_ok=True)
-	with open('bench/instances_auto_5.txt','w') as f:
-	    for iid in ds.select(range(5))['instance_id']:
-	        print(iid, file=f)
+	os.makedirs('bench', exist_ok=True)
+	ids = ds.select(range(5))['instance_id']
+	open('bench/instances_auto_5.txt','w').write('\n'.join(ids)+"\n")
 	PY
 	cd bench
 	python generate_predictions.py \
