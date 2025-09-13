@@ -14,18 +14,9 @@ if [ -f .venv/bin/activate ]; then
   source .venv/bin/activate
 fi
 
-python - <<'PY'
-import sys, subprocess
-pred = sys.argv[1]
-run_id = sys.argv[2]
-cmd = [
-  'python','-m','swebench.harness.run_evaluation',
-  '--dataset_name','princeton-nlp/SWE-bench_Lite',
-  '--predictions_path', pred,
-  '--max_workers', str(workers),
-  '--run_id', run_id,
-]
-print('Running:', ' '.join(cmd))
-subprocess.run(cmd, check=True)
-PY
-"$PRED" "$RUN_ID" "$WORKERS"
+echo "Running SWE-bench eval with $WORKERS worker(s) on $PRED (run_id=$RUN_ID)"
+python -m swebench.harness.run_evaluation \
+  --dataset_name princeton-nlp/SWE-bench_Lite \
+  --predictions_path "$PRED" \
+  --max_workers "$WORKERS" \
+  --run_id "$RUN_ID"
