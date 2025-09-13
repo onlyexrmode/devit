@@ -140,6 +140,17 @@ run-cli:
 release-cli:
 	cargo build -p $(DEVIT_PKG) --bin $(DEVIT_BIN) --release --verbose
 
+## Crée un tar.gz + sha256 en local (même format que la CI)
+.PHONY: dist
+dist: release-cli
+	mkdir -p dist/pkg
+	cp target/release/$(DEVIT_BIN) dist/pkg/
+	[ -f LICENSE ] && cp LICENSE dist/pkg/ || true
+	[ -f README.md ] && cp README.md dist/pkg/ || true
+	tar -czf dist/$(DEVIT_BIN)-$(TAG)-linux-x86_64.tar.gz -C dist pkg
+	cd dist && sha256sum $(DEVIT_BIN)-$(TAG)-linux-x86_64.tar.gz > $(DEVIT_BIN)-$(TAG)-linux-x86_64.sha256
+	@ls -lah dist && echo "SHA256:" && cat dist/$(DEVIT_BIN)-$(TAG)-linux-x86_64.sha256
+
 check-cli:
 	cargo fmt --all -- --check
 	cargo clippy --workspace --all-targets -- -D warnings
@@ -153,6 +164,7 @@ help-cli:
 	@echo "run-cli        : run $(DEVIT_BIN) --help"
 	@echo "check-cli      : fmt + clippy -D warnings + tests"
 	@echo "ci-cli         : check-cli + build-cli"
+	@echo "dist           : package tar.gz + sha256 (local)"
 
 # Generic IDs generator: N defaults to 50 (usage: make bench-ids N=50)
 bench-ids:

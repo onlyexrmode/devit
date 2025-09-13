@@ -1,0 +1,104 @@
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -1,6 +1,7 @@
+ name: Release
+ 
+ on:
++  # Manuel OU déclenchée par un tag v*
+   workflow_dispatch:
+     inputs:
+       tag:
+@@ -15,6 +16,7 @@
+     tags:
+       - "v*"
+ 
+ jobs:
+   release:
+     name: create/update GitHub Release
+@@ -24,6 +26,14 @@
+     steps:
+       - name: Checkout
+         uses: actions/checkout@v4
++
++      - name: Rust toolchain
++        uses: dtolnay/rust-toolchain@stable
++        with:
++          components: rustfmt,clippy
++
++      - name: Cache
++        uses: Swatinem/rust-cache@v2
+ 
+       - name: Determine tag
+         id: tag
+@@ -40,6 +50,29 @@
+           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+           echo "TAG=$TAG" >> "$GITHUB_ENV"
+ 
++      - name: Build and package (linux-x86_64)
++        shell: bash
++        run: |
++          set -euo pipefail
++          echo "Building devit for tag: ${TAG}"
++          # Build binaire CLI (le paquet s'appelle devit-cli, binaire devit)
++          cargo build -p devit-cli --bin devit --release
++          # Prépare le paquet
++          mkdir -p dist/pkg
++          cp target/release/devit dist/pkg/
++          # Fichiers optionnels si présents
++          [[ -f LICENSE ]] && cp LICENSE dist/pkg/ || true
++          [[ -f README.md ]] && cp README.md dist/pkg/ || true
++          # Archive + checksum
++          tar -czf "dist/devit-${TAG}-linux-x86_64.tar.gz" -C dist pkg
++          (cd dist && sha256sum "devit-${TAG}-linux-x86_64.tar.gz" > "devit-${TAG}-linux-x86_64.sha256")
++          # Affiche un aperçu
++          ls -lah dist
++          echo "SHA256:"
++          cat "dist/devit-${TAG}-linux-x86_64.sha256"
++
+       - name: Extract release notes
+         id: notes
+         shell: bash
+@@ -66,6 +99,8 @@
+         uses: softprops/action-gh-release@v2
+         with:
+           tag_name: ${{ steps.tag.outputs.tag }}
++          files: |
++            dist/*
+           draft: ${{ steps.draft.outputs.draft }}
+           body_path: ${{ steps.notes.outputs.notes_file }}
+         env:
+diff --git a/Makefile b/Makefile
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,8 @@
+ .ONESHELL:
+ SHELL := bash
+ 
+ TAG ?= v0.2.0-rc.1
+ DEVIT_PKG ?= devit-cli
+ DEVIT_BIN ?= devit
+@@ -27,6 +28,17 @@ release-cli:
+ 	cargo build -p $(DEVIT_PKG) --bin $(DEVIT_BIN) --release --verbose
+ 
++## Crée un tar.gz + sha256 en local (même format que la CI)
++.PHONY: dist
++dist: release-cli
++	mkdir -p dist/pkg
++	cp target/release/$(DEVIT_BIN) dist/pkg/
++	[ -f LICENSE ] && cp LICENSE dist/pkg/ || true
++	[ -f README.md ] && cp README.md dist/pkg/ || true
++	tar -czf dist/$(DEVIT_BIN)-$(TAG)-linux-x86_64.tar.gz -C dist pkg
++	cd dist && sha256sum $(DEVIT_BIN)-$(TAG)-linux-x86_64.tar.gz > $(DEVIT_BIN)-$(TAG)-linux-x86_64.sha256
++	@ls -lah dist && echo "SHA256:" && cat dist/$(DEVIT_BIN)-$(TAG)-linux-x86_64.sha256
++
+ # Lint + tests sur tout le workspace, stricte (warning = erreur).
+ check-cli:
+ 	cargo fmt --all -- --check
+@@ -37,6 +49,7 @@ help-cli:
+ 	@echo "release-cli    : build release du binaire $(DEVIT_BIN)"
+ 	@echo "run-cli        : lance $(DEVIT_BIN) --help"
+ 	@echo "check-cli      : fmt + clippy -D warnings + tests"
+ 	@echo "ci-cli         : check-cli + build-cli"
++	@echo "dist           : package tar.gz + sha256 (local)"
+
