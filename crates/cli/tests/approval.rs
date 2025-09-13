@@ -29,6 +29,8 @@ fn run_on_request_without_yes_fails_early() {
     let bin = env!("CARGO_BIN_EXE_devit");
     let out = Command::new(bin)
         .current_dir(&d)
+        // Ensure test is not affected by a user-wide override
+        .env_remove("DEVIT_CONFIG")
         .arg("run")
         .arg("--goal")
         .arg("demo")
