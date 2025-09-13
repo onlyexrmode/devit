@@ -6,7 +6,7 @@ RUN_ID=${2:-devit_lite_trial}
 WORKERS=${3:-${WORKERS:-1}}
 LOG_DIR=${LOG_DIR:-bench_logs}
 SWE_TASKS=${SWE_TASKS:-princeton-nlp/SWE-bench_Lite}
-TESTBED=${TESTBED:-local}
+TESTBED=${TESTBED:-bench/testbed}
 TIMEOUT=${TIMEOUT:-600}
 
 if ! command -v python >/dev/null; then
@@ -19,7 +19,7 @@ if [ -f .venv/bin/activate ]; then
 fi
 
 echo "Running SWE-bench eval: tasks=$SWE_TASKS testbed=$TESTBED workers=$WORKERS pred=$PRED run_id=$RUN_ID"
-mkdir -p "$LOG_DIR"
+mkdir -p "$LOG_DIR" "$TESTBED"
 python -m swebench.harness.run_evaluation \
   --swe_bench_tasks "$SWE_TASKS" \
   --predictions_path "$PRED" \
