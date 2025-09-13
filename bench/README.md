@@ -63,6 +63,12 @@ Variables utiles: LOG_DIR, TESTBED, WORKERS, TIMEOUT, IMAGE
 Exemple:
   WORKERS=2 TIMEOUT=900 make bench-eval-docker
 
+Résumé minimal
+Après l'évaluation, un résumé est affiché automatiquement:
+- nombre de prédictions (lignes dans predictions.jsonl)
+- # d'échecs d'application de patch (grep "Apply patch failed")
+- # de "Solved" repérés dans les logs (heuristique)
+
 Les résultats (taux de résolution, logs) seront affichés par le harness.
 
 ## Notes

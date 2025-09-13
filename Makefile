@@ -74,6 +74,7 @@ bench-eval:
 	cd bench
 	LOG_DIR=${LOG_DIR:-bench_logs} TESTBED=${TESTBED:-bench/testbed} WORKERS=${WORKERS:-1} TIMEOUT=${TIMEOUT:-600} \
 	  bash eval.sh predictions.jsonl ${RUN_ID:-devit_lite_smoke} $$WORKERS
+	./summarize.sh predictions.jsonl $$LOG_DIR
 
 bench-eval-docker:
 	set -e
@@ -81,6 +82,7 @@ bench-eval-docker:
 	LOG_DIR=${LOG_DIR:-bench_logs} TESTBED=${TESTBED:-bench/testbed} WORKERS=${WORKERS:-1} TIMEOUT=${TIMEOUT:-600} \
 	  IMAGE=${IMAGE:-devit-swebench:1.1.2} \
 	  bash eval_docker.sh predictions.jsonl ${RUN_ID:-devit_lite_smoke} $$WORKERS
+	./summarize.sh predictions.jsonl $$LOG_DIR
 
 check: fmt-check clippy
 
