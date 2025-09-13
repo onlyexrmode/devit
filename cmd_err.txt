@@ -1,0 +1,28 @@
+ash eval.sh predictions.jsonl devit_lite_smoke 1
+   Compiling devit v0.1.0 (/home/naskel/workspace/devIt/crates/cli)
+error: expected `;`, found keyword `let`
+   --> crates/cli/src/main.rs:232:75
+    |
+232 |         .with_context(|| format!("unable to read config at {}", cfg_path))
+    |                                                                           ^ help: add `;` here
+233 |     let cfg: Config = toml::from_str(&s)?;
+    |     --- unexpected token
+
+error[E0308]: mismatched types
+   --> crates/cli/src/main.rs:233:38
+    |
+233 |     let cfg: Config = toml::from_str(&s)?;
+    |                       -------------- ^^ expected `&str`, found `&Result<String, Error>`
+    |                       |
+    |                       arguments to this function are incorrect
+    |
+    = note: expected reference `&str`
+               found reference `&Result<std::string::String, anyhow::Error>`
+note: function defined here
+   --> /home/naskel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/toml-0.8.23/src/de.rs:41:8
+    |
+41  | pub fn from_str<T>(s: &'_ str) -> Result<T, Error>
+    |        ^^^^^^^^
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `devit` (bin "devit") due to 2 previous errors

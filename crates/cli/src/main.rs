@@ -229,7 +229,7 @@ fn load_cfg(path: &str) -> Result<Config> {
     // Permettre un override via variable d'environnement
     let cfg_path = std::env::var("DEVIT_CONFIG").unwrap_or_else(|_| path.to_string());
     let s = fs::read_to_string(&cfg_path)
-        .with_context(|| format!("unable to read config at {}", cfg_path))
+        .with_context(|| format!("unable to read config at {}", cfg_path))?;
     let cfg: Config = toml::from_str(&s)?;
     Ok(cfg)
 }
