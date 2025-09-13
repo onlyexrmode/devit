@@ -9,3 +9,4 @@ edition = "2021"
 
 [dependencies]
 anyhow = { workspace = true }
+devit-common = { path = "../common" }

@@ -7,6 +7,13 @@ Rust CLI dev agent — patch-only, sandboxed, with local LLMs (Ollama/LM Studio)
 
 Authors: naskel and GPT‑5 Thinking (ChatGPT)
 
+v0.2‑rc highlights (Confiance & interop)
+- Tools JSON I/O: `devit tool list` and `echo '{"name":...,"args":{...}}' | devit tool call -`
+- Sandboxed `shell_exec`: safe‑list + best‑effort `net=off`, output returned as JSON
+- `fs_patch_apply`: `check_only` and `mode: index|worktree` via JSON args
+- Context map: `devit context map .` → `.devit/index.json` (respects .gitignore; ignores `.devit/`, `target/`, `bench/`)
+- Journal JSONL signé (HMAC) sous `.devit/journal.jsonl`; option `git.use_notes`
+
 English (EN)
 - Quickstart
   - Start a local OpenAI‑compatible LLM (LM Studio endpoint, or Ollama /v1).
@@ -33,6 +40,10 @@ English (EN)
   - `devit apply [-|PATCH.diff] [--yes] [--force]` → apply + commit (respects policy)
   - `devit run --goal "..." [PATH] [--yes] [--force]` → suggest→apply→commit→test
   - `devit test` → run tests (auto‑detected stack)
+  - `devit tool list` → JSON description of tools
+  - `echo '{"name":"shell_exec","args":{"cmd":"ls -1 | head"}}' | devit tool call -` → sandboxed shell (JSON I/O)
+  - `echo '{"name":"fs_patch_apply","args":{"patch":"<DIFF>","check_only":true}}' | devit tool call -` → dry‑run patch
+  - `devit context map .` → writes `.devit/index.json`
   - `devit plan` → list `update_plan.yaml`
   - `devit watch [--diff PATCH.diff]` → continuous TUI (Plan | Diff | Logs)
 - Approval policies
@@ -83,6 +94,10 @@ Français (FR)
   - `devit apply [-|PATCH.diff] [--yes] [--force]` → applique + commit (respecte policy)
   - `devit run --goal "..." [PATH] [--yes] [--force]` → suggest→apply→commit→test
   - `devit test` → exécute les tests (stack auto)
+  - `devit tool list` → description JSON des outils
+  - `echo '{"name":"shell_exec","args":{"cmd":"ls -1 | head"}}' | devit tool call -` → shell sandboxé (I/O JSON)
+  - `echo '{"name":"fs_patch_apply","args":{"patch":"<DIFF>","check_only":true}}' | devit tool call -` → dry‑run du patch
+  - `devit context map .` → écrit `.devit/index.json`
   - `devit plan` → liste `update_plan.yaml`
   - `devit watch [--diff PATCH.diff]` → TUI continu (Plan | Diff | Logs)
 - Policies d’approbation

@@ -41,6 +41,8 @@ pub struct SandboxCfg {
 pub struct GitCfg {
     pub conventional: bool,
     pub max_staged_files: u32,
+    #[serde(default)]
+    pub use_notes: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -24,3 +24,7 @@ devit-agent = { path = "../agent" }
 devit-tools = { path = "../tools" }
 sha2 = { workspace = true }
 hex = { workspace = true }
+hmac = { workspace = true }
+rand = { workspace = true }
+serde_json = { workspace = true }
+devit-sandbox = { path = "../sandbox" }

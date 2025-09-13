@@ -6,3 +6,4 @@ bench/workspaces/
 bench/.venv/
 bench/predictions.jsonl
 bench/instances_auto_*.txt
+.devit/

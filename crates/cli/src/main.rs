@@ -4,11 +4,15 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use devit_agent::Agent;
-use devit_common::{Config, PolicyCfg};
+use devit_common::{Config, Event, PolicyCfg};
 use devit_tools::{codeexec, git};
-use std::fs;
-use std::io::{stdin, Read};
+use devit_sandbox as sandbox;
+use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
+use std::fs;
+use std::io::{stdin, Read, Write as _};
+use std::path::{Path, PathBuf};
+use rand::RngCore;
 
 #[derive(Parser, Debug)]
 #[command(name = "devit", version, about = "DevIt CLI - patch-only agent", long_about = None)]
@@ -65,6 +69,12 @@ enum Commands {
         #[command(subcommand)]
         action: ToolCmd,
     },
+
+    /// Context utilities
+    Context {
+        #[command(subcommand)]
+        action: CtxCmd,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -81,6 +91,16 @@ enum ToolCmd {
         /// Auto-approve (no prompt)
         #[arg(long)]
         yes: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum CtxCmd {
+    /// Build a file index at .devit/index.json
+    Map {
+        /// Root path (default: .)
+        #[arg(default_value = ".")]
+        path: String,
     },
 }
 
@@ -146,6 +166,10 @@ async fn main() -> Result<()> {
             if !git::commit(&full_msg)? {
                 anyhow::bail!("Échec git commit.");
             }
+            if cfg.git.use_notes {
+                let _ = git::add_note(&format!("DevIt-Attest: {}", attest));
+            }
+            journal_event(&Event::Attest { hash: attest.clone() })?;
             let sha = git::head_short().unwrap_or_default();
             println!("✅ Commit {}: {}", sha, commit_msg);
         }
@@ -158,7 +182,6 @@ async fn main() -> Result<()> {
             // OnRequest: aucune action automatique; nécessite --yes
             { let eff = cfg.policy.approvals.as_ref().and_then(|m| m.get("git").map(|s| s.to_ascii_lowercase())).unwrap_or_else(|| cfg.policy.approval.to_ascii_lowercase()); if eff == "on-request" && !yes {
                 anyhow::bail!("`devit run` nécessite --yes lorsque policy.approval=on-request"); } }
-            }
             if cfg.policy.sandbox.to_lowercase() == "read-only" {
                 anyhow::bail!(
                     "policy.sandbox=read-only: run/apply refusé (aucune écriture autorisée)"
@@ -214,6 +237,10 @@ async fn main() -> Result<()> {
             if !git::commit(&full_msg)? {
                 anyhow::bail!("Échec git commit.");
             }
+            if cfg.git.use_notes {
+                let _ = git::add_note(&format!("DevIt-Attest: {}", attest));
+            }
+            journal_event(&Event::Attest { hash: attest.clone() })?;
             let sha = git::head_short().unwrap_or_default();
             println!("✅ Commit {}: {}", sha, commit_msg);
             // 5) tests
@@ -249,35 +276,37 @@ async fn main() -> Result<()> {
             match action {
                 ToolCmd::List => {
                     let tools = serde_json::json!([
-                        {"name": "fs_patch_apply", "args": ["input"], "description": "Apply unified diff to index (no commit)"},
-                        {"name": "shell_exec", "args": ["cmd..."], "description": "Execute command via shell (experimental)"}
+                        {"name": "fs_patch_apply", "args": {"patch": "string", "mode": "index|worktree", "check_only": "bool"}, "description": "Apply unified diff (index/worktree), or --check-only"},
+                        {"name": "shell_exec", "args": {"cmd": "string"}, "description": "Execute command via sandboxed shell (safe-list)"}
                     ]);
                     println!("{}", serde_json::to_string_pretty(&tools).unwrap());
                 }
                 ToolCmd::Call { name, input, yes } => {
-                    match name.as_str() {
-                        "fs_patch_apply" => {
-                            ensure_git_repo()?;
-                            if cfg.policy.sandbox.to_lowercase() == "read-only" { anyhow::bail!("policy.sandbox=read-only: apply refusé (aucune écriture autorisée)"); }
-                            let patch = read_patch(&input)?;
-                            git::apply_check(&patch)?;
-                            let ask = requires_approval_tool(&cfg.policy, "git", yes, "write");
-                            if ask && !ask_approval()? { anyhow::bail!("Annulé par l'utilisateur."); }
-                            if !git::apply_index(&patch)? { anyhow::bail!("Échec git apply --index (patch-only)." ); }
-                            println!("ok: patch applied to index (no commit)");
+                    if name == "-" {
+                        let mut s = String::new();
+                        stdin().lock().read_to_string(&mut s)?;
+                        let req: serde_json::Value = serde_json::from_str(&s)
+                            .context("tool call: JSON invalide sur stdin")?;
+                        let tname = req.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                        let args = req.get("args").cloned().unwrap_or(serde_json::json!({}));
+                        let yes_flag = req.get("yes").and_then(|v| v.as_bool()).unwrap_or(yes);
+                        let res = tool_call_json(&cfg, tname, args, yes_flag);
+                        match res {
+                            Ok(v) => println!("{}", serde_json::to_string(&serde_json::json!({"ok": true, "result": v}))?),
+                            Err(e) => println!("{}", serde_json::to_string(&serde_json::json!({"ok": false, "error": e.to_string()}))?),
                         }
-                        "shell_exec" => {
-                            // Minimal experimental implementation
-                            let ask = requires_approval_tool(&cfg.policy, "shell", yes, "exec");
-                            if ask && !ask_approval()? { anyhow::bail!("Annulé par l'utilisateur."); }
-                            // Execute using /bin/sh -lc <input>
-                            let cmd = if input == "-" { anyhow::bail!("shell_exec requires a command string as input"); } else { input };
-                            let status = std::process::Command::new("bash").arg("-lc").arg(&cmd).status()?;
-                            let code = status.code().unwrap_or(-1);
-                            if code != 0 { anyhow::bail!("shell_exec exit code {code}"); }
-                        }
-                        _ => anyhow::bail!("outil inconnu: {}", name),
+                    } else {
+                        let out = tool_call_legacy(&cfg, &name, &input, yes);
+                        if let Err(e) = out { anyhow::bail!(e); }
                     }
+                }
+            }
+        }
+        Some(Commands::Context { action }) => {
+            match action {
+                CtxCmd::Map { path } => {
+                    let written = build_context_index(&path)?;
+                    println!("index écrit: {}", written.display());
                 }
             }
         }
@@ -373,4 +402,160 @@ fn compute_attest_hash(patch: &str) -> String {
     hasher.update(patch.as_bytes());
     let out = hasher.finalize();
     hex::encode(out)
+}
+
+fn ensure_devit_dir() -> Result<PathBuf> {
+    let p = Path::new(".devit");
+    if !p.exists() {
+        fs::create_dir_all(p)?;
+    }
+    Ok(p.to_path_buf())
+}
+
+fn hmac_key() -> Result<Vec<u8>> {
+    let dir = ensure_devit_dir()?;
+    let key_path = dir.join("hmac.key");
+    if key_path.exists() {
+        return Ok(fs::read(key_path)?);
+    }
+    let mut key = vec![0u8; 32];
+    rand::thread_rng().fill_bytes(&mut key);
+    fs::write(&key_path, &key)?;
+    Ok(key)
+}
+
+fn journal_event(ev: &Event) -> Result<()> {
+    let dir = ensure_devit_dir()?;
+    let jpath = dir.join("journal.jsonl");
+    let key = hmac_key()?;
+    let ev_json = serde_json::to_vec(ev)?;
+    type HmacSha256 = Hmac<Sha256>;
+    let mut mac = HmacSha256::new_from_slice(&key).expect("HMAC key");
+    mac.update(&ev_json);
+    let sig = hex::encode(mac.finalize().into_bytes());
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let rec = serde_json::json!({ "ts": ts, "event": ev, "sig": sig });
+    let line = serde_json::to_string(&rec)? + "\n";
+    fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(jpath)?
+        .write_all(line.as_bytes())?;
+    Ok(())
+}
+
+fn build_context_index(root: &str) -> Result<PathBuf> {
+    let dir = ensure_devit_dir()?;
+    let out = dir.join("index.json");
+    let mut files: Vec<String> = Vec::new();
+    // Prefer ripgrep if available
+    let rg_ok = std::process::Command::new("rg")
+        .arg("--version")
+        .output()
+        .is_ok();
+    if rg_ok {
+        let listing = std::process::Command::new("rg")
+            .current_dir(root)
+            .args(["--files"]) // respect .gitignore by default
+            .output()?;
+        let txt = String::from_utf8_lossy(&listing.stdout);
+        for line in txt.lines() {
+            if should_skip(line) { continue; }
+            files.push(line.to_string());
+        }
+    } else {
+        for ent in walkdir::WalkDir::new(root) {
+            let ent = ent?;
+            if ent.file_type().is_file() {
+                let p = ent.path().strip_prefix(root).unwrap_or(ent.path());
+                let s = p.to_string_lossy().to_string();
+                if should_skip(&s) { continue; }
+                files.push(s);
+            }
+        }
+    }
+    files.sort();
+    let obj = serde_json::json!({
+        "root": root,
+        "count": files.len(),
+        "files": files,
+    });
+    let mut f = fs::File::create(&out)?;
+    write!(f, "{}\n", serde_json::to_string_pretty(&obj)?)?;
+    Ok(out)
+}
+
+fn should_skip(path: &str) -> bool {
+    let skip_prefixes = [".git/", "target/", ".devit/", "bench/"];
+    skip_prefixes.iter().any(|p| path.starts_with(p))
+}
+
+fn tool_call_json(cfg: &Config, name: &str, args: serde_json::Value, yes: bool) -> Result<serde_json::Value> {
+    match name {
+        "fs_patch_apply" => {
+            ensure_git_repo()?;
+            if cfg.policy.sandbox.to_lowercase() == "read-only" {
+                anyhow::bail!("policy.sandbox=read-only: apply refusé (aucune écriture autorisée)");
+            }
+            let patch = args.get("patch").and_then(|v| v.as_str()).unwrap_or("");
+            let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("index");
+            let check_only = args.get("check_only").and_then(|v| v.as_bool()).unwrap_or(false);
+            if patch.is_empty() {
+                anyhow::bail!("fs_patch_apply: champ 'patch' requis (contenu du diff)");
+            }
+            git::apply_check(patch)?;
+            if check_only {
+                return Ok(serde_json::json!({"checked": true}));
+            }
+            let ask = requires_approval_tool(&cfg.policy, "git", yes, "write");
+            if ask && !ask_approval()? { anyhow::bail!("Annulé par l'utilisateur."); }
+            let ok = match mode {
+                "worktree" => git::apply_worktree(patch)?,
+                _ => git::apply_index(patch)?,
+            };
+            if !ok { anyhow::bail!("Échec git apply ({mode})"); }
+            let attest = compute_attest_hash(patch);
+            journal_event(&Event::Attest { hash: attest })?;
+            Ok(serde_json::json!({"applied": true, "mode": mode}))
+        }
+        "shell_exec" => {
+            let cmd = args.get("cmd").and_then(|v| v.as_str()).unwrap_or("");
+            if cmd.is_empty() { anyhow::bail!("shell_exec: champ 'cmd' requis"); }
+            let ask = requires_approval_tool(&cfg.policy, "shell", yes, "exec");
+            if ask && !ask_approval()? { anyhow::bail!("Annulé par l'utilisateur."); }
+            let (code, out) = sandbox::run_shell_sandboxed_capture(cmd, &cfg.policy, &cfg.sandbox)?;
+            Ok(serde_json::json!({"exit_code": code, "output": out}))
+        }
+        _ => anyhow::bail!(format!("outil inconnu: {name}")),
+    }
+}
+
+fn tool_call_legacy(cfg: &Config, name: &str, input: &str, yes: bool) -> Result<()> {
+    match name {
+        "fs_patch_apply" => {
+            ensure_git_repo()?;
+            if cfg.policy.sandbox.to_lowercase() == "read-only" { anyhow::bail!("policy.sandbox=read-only: apply refusé (aucune écriture autorisée)"); }
+            let patch = read_patch(input)?;
+            git::apply_check(&patch)?;
+            let ask = requires_approval_tool(&cfg.policy, "git", yes, "write");
+            if ask && !ask_approval()? { anyhow::bail!("Annulé par l'utilisateur."); }
+            if !git::apply_index(&patch)? { anyhow::bail!("Échec git apply --index (patch-only)." ); }
+            let attest = compute_attest_hash(&patch);
+            journal_event(&Event::Attest { hash: attest })?;
+            println!("ok: patch applied to index (no commit)");
+            Ok(())
+        }
+        "shell_exec" => {
+            let ask = requires_approval_tool(&cfg.policy, "shell", yes, "exec");
+            if ask && !ask_approval()? { anyhow::bail!("Annulé par l'utilisateur."); }
+            let cmd = if input == "-" { anyhow::bail!("shell_exec requires a command string as input"); } else { input.to_string() };
+            let code = sandbox::run_shell_sandboxed(&cmd, &cfg.policy, &cfg.sandbox)?;
+            if code != 0 { anyhow::bail!(format!("shell_exec exit code {code}")); }
+            Ok(())
+        }
+        _ => anyhow::bail!(format!("outil inconnu: {name}")),
+    }
 }

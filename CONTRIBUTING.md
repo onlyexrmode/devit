@@ -1,24 +1,21 @@
-Contributing to DevIt
+# CONTRIBUTING.md
+Merci de contribuer à DevIt 💚
 
-Setup
-- Install Rust stable and `git`.
-- Build: `cargo build --workspace`
+## Setup
+- Rust stable, `cargo build --workspace`.
+- Backend local (LM Studio / Ollama).
+- `DEVIT_CONFIG` pour pointer un `devit.toml`.
 
-Guidelines
-- Small, focused PRs. Keep changes minimal and adherent to existing style.
-- Preserve policies: approval + sandbox must be enforced in the CLI paths.
-- Add/update docs when changing behavior (README/FEATURES_TRACK/ROADMAP).
+## Workflow
+- Issues → Discussions → PR.
+- Commits Conventional: `feat: …`, `fix: …` (≤72 chars).
+- PR = patchs minimaux, tests, description claire, reproduction.
 
-Testing
-- Prefer unit tests for library code (`devit-common`, `devit-tools`).
-- Integration tests (`crates/cli/tests`) should avoid network; use temp dirs.
+## Code style
+- `cargo fmt`, `cargo clippy -D warnings`.
+- Pas de side-effects implicites : **diff-first**.
 
-Code Style
-- Rust 2021, `cargo fmt`, `cargo clippy -D warnings`.
-
-Security
-- Never bypass the sandbox in CLI paths unless `--no-sandbox` is explicitly set.
-
-Release
-- Tags `v*` trigger CI release artefacts for the `devit` binary.
+## Tests
+- `cargo test --workspace`.
+- Pour le bench: voir `bench/README.md` (optionnel).
 

@@ -102,6 +102,22 @@ pub fn apply_index(patch: &str) -> Result<bool> {
     )))
 }
 
+/// Applique le patch sur le worktree (sans stage)
+pub fn apply_worktree(patch: &str) -> Result<bool> {
+    let (ok, out) = run_git_with_patch(&["apply", "-"], patch)?;
+    if ok {
+        return Ok(true);
+    }
+    // Fallback 3-way (utile en présence de divergences mineures)
+    let (ok2, out2) = run_git_with_patch(&["apply", "--3way", "-"], patch)?;
+    if ok2 {
+        return Ok(true);
+    }
+    Err(anyhow!(format!(
+        "git apply (worktree) a échoué:\n{out}\n--- 3-way fallback ---\n{out2}"
+    )))
+}
+
 pub fn commit(message: &str) -> Result<bool> {
     let status = Command::new("git")
         .args(["commit", "-m", message])
@@ -135,4 +151,11 @@ pub fn is_worktree_clean() -> bool {
         .map(|s| s.success())
         .unwrap_or(true);
     wt && idx
+}
+
+pub fn add_note(message: &str) -> Result<bool> {
+    let status = Command::new("git")
+        .args(["notes", "add", "-m", message])
+        .status()?;
+    Ok(status.success())
 }

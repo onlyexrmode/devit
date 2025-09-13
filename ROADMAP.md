@@ -1,4 +1,9 @@
 **v0.2 — “Confiance & interop”**
+v0.2-rc (pre-release) livré:
+- shell_exec sandboxé (safe‑list + no‑net best‑effort), I/O JSON
+- fs_patch_apply (check-only + index/worktree) via I/O JSON
+- context map `.devit/index.json` (respect .gitignore; ignore `.devit/`, `target/`, `bench/`)
+- journal JSONL signé (HMAC) + option `git notes`
 MCP bi-directionnel : DevIt consomme ET expose des outils (fs patch-only, shell sandboxé).
 Plugins WASM/WASI : outils (grep, formatter, linter) isolés, chargeables à chaud.
 Contexte intelligent : map du repo (ripgrep + tree-sitter), sélection de fichiers pertinents, cache d’index local.
