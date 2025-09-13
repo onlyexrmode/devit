@@ -14,7 +14,13 @@ fn write_cfg(dir: &std::path::Path, approval: &str) {
 fn run_on_request_without_yes_fails_early() {
     // create a temp dir manually
     let mut d = std::env::temp_dir();
-    let uniq = format!("devit-test-{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis());
+    let uniq = format!(
+        "devit-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    );
     d.push(uniq);
     fs::create_dir_all(&d).unwrap();
     write_cfg(&d, "on-request");
@@ -24,7 +30,8 @@ fn run_on_request_without_yes_fails_early() {
     let out = Command::new(bin)
         .current_dir(&d)
         .arg("run")
-        .arg("--goal").arg("demo")
+        .arg("--goal")
+        .arg("demo")
         .output()
         .expect("failed to execute binary");
 

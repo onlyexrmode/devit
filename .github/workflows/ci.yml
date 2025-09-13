@@ -23,8 +23,30 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: fmt
+      - name: fmt (check)
+        id: fmt
+        continue-on-error: true
         run: cargo fmt --all -- --check
+
+      - name: rustfmt patch (artifact)
+        if: steps.fmt.outcome == 'failure'
+        run: |
+          cargo fmt --all
+          git diff > rustfmt.patch || true
+        shell: bash
+
+      - name: Upload rustfmt.patch
+        if: steps.fmt.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustfmt-patch
+          path: rustfmt.patch
+
+      - name: Fail on formatting
+        if: steps.fmt.outcome == 'failure'
+        run: |
+          echo "Formatting issues detected. Download rustfmt-patch artifact to apply." >&2
+          exit 1
 
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings

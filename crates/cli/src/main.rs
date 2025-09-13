@@ -5,51 +5,55 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use devit_agent::Agent;
 use devit_common::Config;
-use devit_tools::{git, codeexec};
+use devit_tools::{codeexec, git};
 use std::fs;
-use std::io::{Read, stdin};
+use std::io::{stdin, Read};
 
 #[derive(Parser, Debug)]
 #[command(name = "devit", version, about = "DevIt CLI - patch-only agent", long_about = None)]
-struct Cli
-{
+struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
-enum Commands
-{
+enum Commands {
     /// Propose a patch (unified diff)
-    Suggest
-    {
-        #[arg(default_value = ".")] path: String,
+    Suggest {
+        #[arg(default_value = ".")]
+        path: String,
         /// Goal to achieve (e.g., "add websocket support")
-        #[arg(short, long)] goal: String,
+        #[arg(short, long)]
+        goal: String,
     },
 
     /// Apply a unified diff to the workspace
-    Apply
-    {
+    Apply {
         /// Read diff from file, or '-' for stdin (default)
-        #[arg(default_value = "-")] input: String,
+        #[arg(default_value = "-")]
+        input: String,
         /// Auto-approve (no prompt)
-        #[arg(long)] yes: bool,
+        #[arg(long)]
+        yes: bool,
         /// Continue even if worktree/index is dirty (try 3-way)
-        #[arg(long)] force: bool,
+        #[arg(long)]
+        force: bool,
     },
 
     /// Chain: suggest -> (approval) -> apply -> commit -> test
-    Run
-    {
+    Run {
         /// Workspace path (default: current dir)
-        #[arg(default_value = ".")] path: String,
+        #[arg(default_value = ".")]
+        path: String,
         /// Goal to achieve
-        #[arg(short, long)] goal: String,
+        #[arg(short, long)]
+        goal: String,
         /// Auto-approve write/apply
-        #[arg(long)] yes: bool,
+        #[arg(long)]
+        yes: bool,
         /// Continue even if worktree/index is dirty (try 3-way)
-        #[arg(long)] force: bool,
+        #[arg(long)]
+        force: bool,
     },
 
     /// Run tests according to detected stack (Cargo/npm/CMake)
@@ -57,8 +61,7 @@ enum Commands
 }
 
 #[tokio::main]
-async fn main() -> Result<()>
-{
+async fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
 
     let cli = Cli::parse();
@@ -66,14 +69,12 @@ async fn main() -> Result<()>
     let agent = Agent::new(cfg.clone());
 
     match cli.command {
-        Some(Commands::Suggest { path, goal }) =>
-        {
+        Some(Commands::Suggest { path, goal }) => {
             let ctx = collect_context(&path)?;
             let diff = agent.suggest_patch(&goal, &ctx).await?;
             println!("{}", diff);
         }
-        Some(Commands::Apply { input, yes, force }) =>
-        {
+        Some(Commands::Apply { input, yes, force }) => {
             ensure_git_repo()?;
             if cfg.policy.sandbox.to_lowercase() == "read-only" {
                 anyhow::bail!("policy.sandbox=read-only: apply refusé (aucune écriture autorisée)");
@@ -97,9 +98,15 @@ async fn main() -> Result<()>
             let must_ask = !yes && cfg.policy.approval.to_lowercase() != "never";
             if must_ask {
                 eprintln!("Patch prêt: {summary}");
-                for e in ns.iter().take(10) { eprintln!("  - {}", e.path); }
-                if ns.len() > 10 { eprintln!("  … ({} autres)", ns.len() - 10); }
-                if !ask_approval()? { anyhow::bail!("Annulé par l'utilisateur."); }
+                for e in ns.iter().take(10) {
+                    eprintln!("  - {}", e.path);
+                }
+                if ns.len() > 10 {
+                    eprintln!("  … ({} autres)", ns.len() - 10);
+                }
+                if !ask_approval()? {
+                    anyhow::bail!("Annulé par l'utilisateur.");
+                }
             }
             // 4) apply + commit
             if !git::apply_index(&patch)? {
@@ -115,14 +122,20 @@ async fn main() -> Result<()>
             let sha = git::head_short().unwrap_or_default();
             println!("✅ Commit {}: {}", sha, commit_msg);
         }
-        Some(Commands::Run { path, goal, yes, force }) =>
-        {
+        Some(Commands::Run {
+            path,
+            goal,
+            yes,
+            force,
+        }) => {
             // OnRequest: aucune action automatique; nécessite --yes
             if cfg.policy.approval.to_lowercase() == "on-request" && !yes {
                 anyhow::bail!("`devit run` nécessite --yes lorsque policy.approval=on-request");
             }
             if cfg.policy.sandbox.to_lowercase() == "read-only" {
-                anyhow::bail!("policy.sandbox=read-only: run/apply refusé (aucune écriture autorisée)");
+                anyhow::bail!(
+                    "policy.sandbox=read-only: run/apply refusé (aucune écriture autorisée)"
+                );
             }
             ensure_git_repo()?;
             // 1) suggest
@@ -147,9 +160,15 @@ async fn main() -> Result<()>
             let summary = format!("{} fichier(s), +{}, -{}", files, added, deleted);
             if !(yes || cfg.policy.approval.to_lowercase() == "never") {
                 eprintln!("Patch prêt (RUN): {summary}");
-                for e in ns.iter().take(10) { eprintln!("  - {}", e.path); }
-                if ns.len() > 10 { eprintln!("  … ({} autres)", ns.len() - 10); }
-                if !ask_approval()? { anyhow::bail!("Annulé par l'utilisateur."); }
+                for e in ns.iter().take(10) {
+                    eprintln!("  - {}", e.path);
+                }
+                if ns.len() > 10 {
+                    eprintln!("  … ({} autres)", ns.len() - 10);
+                }
+                if !ask_approval()? {
+                    anyhow::bail!("Annulé par l'utilisateur.");
+                }
             }
             // 4) apply + commit
             if !git::apply_index(&patch)? {
@@ -176,16 +195,20 @@ async fn main() -> Result<()>
                 anyhow::bail!("❌ Tests FAIL (exit code {code})");
             }
         }
-        Some(Commands::Test) =>
-        {
+        Some(Commands::Test) => {
             if cfg.policy.sandbox.to_lowercase() == "read-only" {
-                anyhow::bail!("policy.sandbox=read-only: test refusé (exécution/écriture interdites)");
+                anyhow::bail!(
+                    "policy.sandbox=read-only: test refusé (exécution/écriture interdites)"
+                );
             }
             match codeexec::run_tests_with_output() {
                 Ok((code, out)) => {
                     println!("{}", out);
-                    if code == 0 { println!("✅ Tests PASS"); }
-                    else { anyhow::bail!("❌ Tests FAIL (exit code {code})"); }
+                    if code == 0 {
+                        println!("✅ Tests PASS");
+                    } else {
+                        anyhow::bail!("❌ Tests FAIL (exit code {code})");
+                    }
                 }
                 Err(e) => {
                     anyhow::bail!("Impossible d'exécuter les tests: {e}");
@@ -202,15 +225,13 @@ async fn main() -> Result<()>
     Ok(())
 }
 
-fn load_cfg(path: &str) -> Result<Config>
-{
+fn load_cfg(path: &str) -> Result<Config> {
     let s = fs::read_to_string(path)?;
     let cfg: Config = toml::from_str(&s)?;
     Ok(cfg)
 }
 
-fn collect_context(path: &str) -> Result<String>
-{
+fn collect_context(path: &str) -> Result<String> {
     // MVP: naive — list a few files with content; later: git-aware, size limits
     let mut out = String::new();
     for entry in walkdir::WalkDir::new(path).max_depth(2) {
@@ -227,8 +248,7 @@ fn collect_context(path: &str) -> Result<String>
     Ok(out)
 }
 
-fn read_patch(input: &str) -> Result<String>
-{
+fn read_patch(input: &str) -> Result<String> {
     if input == "-" {
         let mut s = String::new();
         stdin().lock().read_to_string(&mut s)?;
@@ -238,8 +258,7 @@ fn read_patch(input: &str) -> Result<String>
     }
 }
 
-fn ensure_git_repo() -> Result<()>
-{
+fn ensure_git_repo() -> Result<()> {
     if !git::is_git_available() {
         anyhow::bail!("git n'est pas disponible dans le PATH.");
     }
@@ -249,8 +268,7 @@ fn ensure_git_repo() -> Result<()>
     Ok(())
 }
 
-fn ask_approval() -> Result<bool>
-{
+fn ask_approval() -> Result<bool> {
     use std::io::{self, Write};
     eprint!("Appliquer le patch et committer ? [y/N] ");
     io::stderr().flush().ok();
@@ -260,8 +278,7 @@ fn ask_approval() -> Result<bool>
     Ok(ans == "y" || ans == "yes")
 }
 
-fn default_commit_msg(goal: Option<&str>, summary: &str) -> String
-{
+fn default_commit_msg(goal: Option<&str>, summary: &str) -> String {
     match goal {
         Some(g) if !g.trim().is_empty() => format!("feat: {} ({})", g.trim(), summary),
         _ => format!("chore: apply patch ({})", summary),
