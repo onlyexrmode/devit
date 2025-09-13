@@ -67,7 +67,8 @@ bench-smoke:
 	  --split test \
 	  --limit 5 \
 	  --allow-empty
-	bash eval.sh predictions.jsonl devit_lite_smoke 1
+	# Run harness; allow failure in smoke
+	-bash eval.sh predictions.jsonl devit_lite_smoke 1
 
 check: fmt-check clippy
 

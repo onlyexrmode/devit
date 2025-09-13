@@ -1,28 +1,6 @@
-ash eval.sh predictions.jsonl devit_lite_smoke 1
-   Compiling devit v0.1.0 (/home/naskel/workspace/devIt/crates/cli)
-error: expected `;`, found keyword `let`
-   --> crates/cli/src/main.rs:232:75
-    |
-232 |         .with_context(|| format!("unable to read config at {}", cfg_path))
-    |                                                                           ^ help: add `;` here
-233 |     let cfg: Config = toml::from_str(&s)?;
-    |     --- unexpected token
-
-error[E0308]: mismatched types
-   --> crates/cli/src/main.rs:233:38
-    |
-233 |     let cfg: Config = toml::from_str(&s)?;
-    |                       -------------- ^^ expected `&str`, found `&Result<String, Error>`
-    |                       |
-    |                       arguments to this function are incorrect
-    |
-    = note: expected reference `&str`
-               found reference `&Result<std::string::String, anyhow::Error>`
-note: function defined here
-   --> /home/naskel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/toml-0.8.23/src/de.rs:41:8
-    |
-41  | pub fn from_str<T>(s: &'_ str) -> Result<T, Error>
-    |        ^^^^^^^^
-
-For more information about this error, try `rustc --explain E0308`.
-error: could not compile `devit` (bin "devit") due to 2 previous errors
+Running SWE-bench eval with 1 worker(s) on predictions.jsonl (run_id=devit_lite_smoke)
+<frozen runpy>:128: RuntimeWarning: 'swebench.harness.run_evaluation' found in sys.modules after import of package 'swebench.harness', but prior to execution of 'swebench.harness.run_evaluation'; this may result in unpredictable behaviour
+usage: run_evaluation.py [-h] --predictions_path PREDICTIONS_PATH --log_dir LOG_DIR --swe_bench_tasks SWE_BENCH_TASKS --testbed TESTBED
+                         [--conda_link CONDA_LINK] [--log_suffix LOG_SUFFIX] [--skip_existing] [--timeout TIMEOUT] [--verbose] [--num_processes NUM_PROCESSES]
+run_evaluation.py: error: the following arguments are required: --log_dir, --swe_bench_tasks, --testbed
+make: *** [Makefile:45: bench-smoke] Error 2
