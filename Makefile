@@ -39,20 +39,21 @@ watch:
 	cargo run -p devit -- watch
 
 bench-smoke:
-	set -e; \
-	cargo build -p devit --release; \
-	export DEVIT_BIN="$(PWD)/target/release/devit"; \
-	export DEVIT_CONFIG="$(PWD)/bench/devit.bench.toml"; \
-	export DEVIT_BACKEND_URL="http://localhost:11434/v1"; \
-	export DEVIT_TIMEOUT_SECS=120; \
-	python - <<'PY'; \
-from datasets import load_dataset; \
-ds = load_dataset('princeton-nlp/SWE-bench_Lite', split='test'); \
-import os; os.makedirs('bench', exist_ok=True); \
-with open('bench/instances_auto_5.txt','w') as f: \
-    for iid in ds.select(range(5))['instance_id']: print(iid, file=f); \
+	set -e
+	cargo build -p devit --release
+	export DEVIT_BIN="$(PWD)/target/release/devit"
+	export DEVIT_CONFIG="$(PWD)/bench/devit.bench.toml"
+	export DEVIT_BACKEND_URL="http://localhost:11434/v1"
+	export DEVIT_TIMEOUT_SECS=120
+	python - <<'PY'
+from datasets import load_dataset
+ds = load_dataset('princeton-nlp/SWE-bench_Lite', split='test')
+import os; os.makedirs('bench', exist_ok=True)
+with open('bench/instances_auto_5.txt','w') as f:
+    for iid in ds.select(range(5))['instance_id']:
+        print(iid, file=f)
 PY
-	cd bench && \
+	cd bench
 	python generate_predictions.py \
 	  --instances instances_auto_5.txt \
 	  --output predictions.jsonl \
@@ -62,11 +63,13 @@ PY
 	  --dataset princeton-nlp/SWE-bench_Lite \
 	  --split test \
 	  --limit 5 \
-	  --allow-empty && \
+	  --allow-empty
 	bash eval.sh predictions.jsonl devit_lite_smoke 1
 
 check: fmt-check clippy
 
 verify: check build test
 
+.ONESHELL:
+SHELL := bash
 ci: verify
