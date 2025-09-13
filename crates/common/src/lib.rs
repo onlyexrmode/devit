@@ -2,6 +2,7 @@
 // # crates/common/src/lib.rs
 // # -----------------------------
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -23,6 +24,10 @@ pub struct BackendCfg {
 pub struct PolicyCfg {
     pub approval: String,
     pub sandbox: String,
+    #[serde(default)]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub approvals: Option<HashMap<String, String>>, // per-tool overrides: git|shell|test
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,5 +63,8 @@ pub enum Event {
     },
     Info {
         message: String,
+    },
+    Attest {
+        hash: String,
     },
 }

@@ -4,7 +4,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use devit_agent::Agent;
-use devit_common::Config;
+use devit_common::{Config, PolicyCfg};
 use devit_tools::{codeexec, git};
 use std::fs;
 use std::io::{stdin, Read};
@@ -59,6 +59,29 @@ enum Commands {
 
     /// Run tests according to detected stack (Cargo/npm/CMake)
     Test,
+
+    /// Tools (experimental): list and call
+    Tool {
+        #[command(subcommand)]
+        action: ToolCmd,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ToolCmd {
+    /// List available tools (JSON)
+    List,
+    /// Call a tool
+    Call {
+        /// Tool name (fs_patch_apply | shell_exec)
+        name: String,
+        /// Read diff from file, or '-' for stdin (fs_patch_apply), or command for shell_exec after '--'
+        #[arg(default_value = "-")]
+        input: String,
+        /// Auto-approve (no prompt)
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[tokio::main]
@@ -114,7 +137,8 @@ async fn main() -> Result<()> {
                 anyhow::bail!("Échec git apply --index.");
             }
             // Génère un titre de commit (LLM si dispo, sinon fallback)
-            let _diff_head = patch.lines().take(60).collect::<Vec<_>>().join("\n");
+            let _diff_head = patch.lines().take(60).collect::<Vec<_>>().join("
+");
             // Pas de goal ici → fallback générique
             let commit_msg = default_commit_msg(None, &summary);
             let attest = compute_attest_hash(&patch);
@@ -132,8 +156,8 @@ async fn main() -> Result<()> {
             force,
         }) => {
             // OnRequest: aucune action automatique; nécessite --yes
-            if cfg.policy.approval.to_lowercase() == "on-request" && !yes {
-                anyhow::bail!("`devit run` nécessite --yes lorsque policy.approval=on-request");
+            { let eff = cfg.policy.approvals.as_ref().and_then(|m| m.get("git").map(|s| s.to_ascii_lowercase())).unwrap_or_else(|| cfg.policy.approval.to_ascii_lowercase()); if eff == "on-request" && !yes {
+                anyhow::bail!("`devit run` nécessite --yes lorsque policy.approval=on-request"); } }
             }
             if cfg.policy.sandbox.to_lowercase() == "read-only" {
                 anyhow::bail!(
@@ -161,7 +185,7 @@ async fn main() -> Result<()> {
             let added: u64 = ns.iter().map(|e| e.added).sum();
             let deleted: u64 = ns.iter().map(|e| e.deleted).sum();
             let summary = format!("{} fichier(s), +{}, -{}", files, added, deleted);
-            if !(yes || cfg.policy.approval.to_lowercase() == "never") {
+            if requires_approval_tool(&cfg.policy, "git", yes, "write") {
                 eprintln!("Patch prêt (RUN): {summary}");
                 for e in ns.iter().take(10) {
                     eprintln!("  - {}", e.path);
@@ -218,6 +242,42 @@ async fn main() -> Result<()> {
                 }
                 Err(e) => {
                     anyhow::bail!("Impossible d'exécuter les tests: {e}");
+                }
+            }
+        }
+        Some(Commands::Tool { action }) => {
+            match action {
+                ToolCmd::List => {
+                    let tools = serde_json::json!([
+                        {"name": "fs_patch_apply", "args": ["input"], "description": "Apply unified diff to index (no commit)"},
+                        {"name": "shell_exec", "args": ["cmd..."], "description": "Execute command via shell (experimental)"}
+                    ]);
+                    println!("{}", serde_json::to_string_pretty(&tools).unwrap());
+                }
+                ToolCmd::Call { name, input, yes } => {
+                    match name.as_str() {
+                        "fs_patch_apply" => {
+                            ensure_git_repo()?;
+                            if cfg.policy.sandbox.to_lowercase() == "read-only" { anyhow::bail!("policy.sandbox=read-only: apply refusé (aucune écriture autorisée)"); }
+                            let patch = read_patch(&input)?;
+                            git::apply_check(&patch)?;
+                            let ask = requires_approval_tool(&cfg.policy, "git", yes, "write");
+                            if ask && !ask_approval()? { anyhow::bail!("Annulé par l'utilisateur."); }
+                            if !git::apply_index(&patch)? { anyhow::bail!("Échec git apply --index (patch-only)." ); }
+                            println!("ok: patch applied to index (no commit)");
+                        }
+                        "shell_exec" => {
+                            // Minimal experimental implementation
+                            let ask = requires_approval_tool(&cfg.policy, "shell", yes, "exec");
+                            if ask && !ask_approval()? { anyhow::bail!("Annulé par l'utilisateur."); }
+                            // Execute using /bin/sh -lc <input>
+                            let cmd = if input == "-" { anyhow::bail!("shell_exec requires a command string as input"); } else { input };
+                            let status = std::process::Command::new("bash").arg("-lc").arg(&cmd).status()?;
+                            let code = status.code().unwrap_or(-1);
+                            if code != 0 { anyhow::bail!("shell_exec exit code {code}"); }
+                        }
+                        _ => anyhow::bail!("outil inconnu: {}", name),
+                    }
                 }
             }
         }
@@ -291,6 +351,20 @@ fn default_commit_msg(goal: Option<&str>, summary: &str) -> String {
     match goal {
         Some(g) if !g.trim().is_empty() => format!("feat: {} ({})", g.trim(), summary),
         _ => format!("chore: apply patch ({})", summary),
+    }
+}
+
+fn requires_approval_tool(policy: &PolicyCfg, tool: &str, yes_flag: bool, action: &str) -> bool {
+    let eff = policy.approvals.as_ref()
+        .and_then(|m| m.get(&tool.to_ascii_lowercase()).map(|s| s.to_ascii_lowercase()))
+        .unwrap_or_else(|| policy.approval.to_ascii_lowercase());
+    match (eff.as_str(), action) {
+        ("never", _) => false,
+        ("untrusted", _) => true,
+        ("on-request", _) => !yes_flag,
+        ("on-failure", "write") => !yes_flag,
+        ("on-failure", _) => false,
+        _ => !yes_flag,
     }
 }
 
