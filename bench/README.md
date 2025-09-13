@@ -50,15 +50,15 @@ python generate_predictions.py \
   --limit 5 \
   --allow-empty
 
-## Évaluer (harness officiel SWE-bench)
-bash eval.sh predictions.jsonl devit_lite_smoke 1
+### Évaluation (optionnelle dans le smoke)
+make bench-eval
 
 Les résultats (taux de résolution, logs) seront affichés par le harness.
 
 ## Notes
 Le script clone et checkout chaque repo à base_commit du dataset, puis lance devit suggest --goal ... dans ce workspace.
 Tip : commencez par 5–10 instances pour valider le pipeline, puis étendez.
-Compat : DevIt est diff-first ; assurez-vous que le backend LLM peut traiter des projets non-Rust (beaucoup d'instances sont Pyth
+Compat : DevIt est diff-first ; assurez-vous que le backend LLM peut traiter des projets non-Rust (beaucoup d'instances sont Python)
 
 ## Conseils pratiques
 Backend : pour un run non-interactif, configure devit.toml avec approval = "never" et sandbox = "workspace-write".

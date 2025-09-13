@@ -67,8 +67,13 @@ bench-smoke:
 	  --split test \
 	  --limit 5 \
 	  --allow-empty
-	# Run harness; allow failure in smoke
-	-bash eval.sh predictions.jsonl devit_lite_smoke 1
+	@echo "[bench-smoke] predictions.jsonl generated. To run harness: make bench-eval"
+
+bench-eval:
+	set -e
+	cd bench
+	LOG_DIR=${LOG_DIR:-bench_logs} TESTBED=${TESTBED:-bench/testbed} WORKERS=${WORKERS:-1} TIMEOUT=${TIMEOUT:-600} \
+	  bash eval.sh predictions.jsonl ${RUN_ID:-devit_lite_smoke} $$WORKERS
 
 check: fmt-check clippy
 
