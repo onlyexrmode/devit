@@ -56,6 +56,8 @@ python generate_predictions.py \
 
 - En Docker (recommandé si votre Python n'est pas compatible):
   make bench-eval-docker
+  # Si vous voyez "Bad git executable", forcez la reconstruction de l'image:
+  REBUILD=1 make bench-eval-docker
 
 Variables utiles: LOG_DIR, TESTBED, WORKERS, TIMEOUT, IMAGE
 Exemple:

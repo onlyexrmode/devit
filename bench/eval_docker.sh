@@ -9,6 +9,7 @@ TESTBED=${TESTBED:-bench/testbed}
 SWE_TASKS=${SWE_TASKS:-princeton-nlp/SWE-bench_Lite}
 TIMEOUT=${TIMEOUT:-600}
 IMAGE=${IMAGE:-devit-swebench:1.1.2}
+REBUILD=${REBUILD:-0}
 
 if ! command -v docker >/dev/null; then
   echo "docker is required" >&2; exit 1
@@ -16,9 +17,9 @@ fi
 
 cd "$(dirname "$0")"
 
-if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-  echo "[eval_docker] Building image $IMAGE ..."
-  docker build -t "$IMAGE" -f Dockerfile.swebench .
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1 || [ "$REBUILD" = "1" ]; then
+  echo "[eval_docker] Building image $IMAGE (REBUILD=$REBUILD) ..."
+  docker build --pull $([ "$REBUILD" = "1" ] && echo "--no-cache") -t "$IMAGE" -f Dockerfile.swebench .
 fi
 
 mkdir -p "$LOG_DIR" "$TESTBED"
@@ -34,4 +35,3 @@ docker run --rm \
   --num_processes "$WORKERS" \
   --timeout "$TIMEOUT" \
   --log_suffix "$RUN_ID"
-
