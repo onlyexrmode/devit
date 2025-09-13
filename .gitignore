@@ -2,3 +2,7 @@
 /.idea
 /.vscode
 .DS_Store
+bench/workspaces/
+bench/.venv/
+bench/predictions.jsonl
+bench/instances_auto_*.txt

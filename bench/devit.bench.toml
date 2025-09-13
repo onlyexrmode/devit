@@ -1,8 +1,8 @@
 [backend]
 kind = "openai_like"
 # ajuste selon ton setup :
-base_url = "http://localhost:1234/v1"   # LM Studio
-# base_url = "http://localhost:11434/v1" # Ollama (fallback /api/chat géré dans le backend)
+base_url = "http://localhost:11434/v1"   # Ollama (OpenAI-compatible)
+# base_url = "http://localhost:1234/v1"  # LM Studio
 model = "llama3:8b"
 api_key = ""
 
