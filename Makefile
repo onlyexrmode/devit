@@ -1,3 +1,6 @@
+.ONESHELL:
+SHELL := bash
+
 .PHONY: fmt fmt-check fmt-fix clippy lint test test-cli build build-release smoke ci check verify help
 
 help:
@@ -45,14 +48,14 @@ bench-smoke:
 	export DEVIT_CONFIG="$(PWD)/bench/devit.bench.toml"
 	export DEVIT_BACKEND_URL="http://localhost:11434/v1"
 	export DEVIT_TIMEOUT_SECS=120
-	python - <<'PY'
-from datasets import load_dataset
-ds = load_dataset('princeton-nlp/SWE-bench_Lite', split='test')
-import os; os.makedirs('bench', exist_ok=True)
-with open('bench/instances_auto_5.txt','w') as f:
-    for iid in ds.select(range(5))['instance_id']:
-        print(iid, file=f)
-PY
+	python - <<-'PY'
+	from datasets import load_dataset
+	ds = load_dataset('princeton-nlp/SWE-bench_Lite', split='test')
+	import os; os.makedirs('bench', exist_ok=True)
+	with open('bench/instances_auto_5.txt','w') as f:
+	    for iid in ds.select(range(5))['instance_id']:
+	        print(iid, file=f)
+	PY
 	cd bench
 	python generate_predictions.py \
 	  --instances instances_auto_5.txt \
@@ -70,6 +73,4 @@ check: fmt-check clippy
 
 verify: check build test
 
-.ONESHELL:
-SHELL := bash
 ci: verify
