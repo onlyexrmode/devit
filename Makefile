@@ -32,6 +32,12 @@ build-release:
 smoke:
 	./scripts/prepush-smoketest.sh
 
+plan:
+	cargo run -p devit -- plan
+
+watch:
+	cargo run -p devit -- watch
+
 check: fmt-check clippy
 
 verify: check build test
