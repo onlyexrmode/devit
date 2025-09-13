@@ -6,11 +6,22 @@ name = "devit-cli"
 version = "0.2.0-rc.1"
 edition = "2021"
 
+[features]
+# Aucun impact par défaut. Active les bins/commandes MCP.
+default = []
+experimental = []
+
 ## Conserver le nom du binaire `devit`
 ## (sinon Cargo le renommerait en `devit-cli`)
 [[bin]]
 name = "devit"
 path = "src/main.rs"
+
+# Binaire expérimental MCP (n'est compilé que si feature activée)
+[[bin]]
+name = "devit-mcp"
+path = "src/bin/devit-mcp.rs"
+required-features = ["experimental"]
 
 [dependencies]
 anyhow = { workspace = true }

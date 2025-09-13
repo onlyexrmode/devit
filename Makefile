@@ -7,6 +7,8 @@ SHELL := bash
 TAG ?= v0.2.0-rc.1
 DEVIT_PKG ?= devit-cli
 DEVIT_BIN ?= devit
+# Ensure cargo gets a binary NAME, not a path possibly set in env
+DEVIT_BIN_NAME := $(notdir $(DEVIT_BIN))
 
 .PHONY: fmt fmt-check fmt-fix clippy lint test test-cli build build-release smoke ci check verify help \
         build-cli run-cli release-cli check-cli ci-cli help-cli
@@ -132,24 +134,24 @@ release-publish:
 
 # ===== CLI-focused targets (safe, no side effects) =====
 build-cli:
-	cargo build -p $(DEVIT_PKG) --bin $(DEVIT_BIN) --verbose
+	cargo build -p $(DEVIT_PKG) --bin $(DEVIT_BIN_NAME) --verbose
 
 run-cli:
-	cargo run -p $(DEVIT_PKG) --bin $(DEVIT_BIN) -- --help
+	cargo run -p $(DEVIT_PKG) --bin $(DEVIT_BIN_NAME) -- --help
 
 release-cli:
-	cargo build -p $(DEVIT_PKG) --bin $(DEVIT_BIN) --release --verbose
+	cargo build -p $(DEVIT_PKG) --bin $(DEVIT_BIN_NAME) --release --verbose
 
 ## Crée un tar.gz + sha256 en local (même format que la CI)
 .PHONY: dist
 dist: release-cli
 	mkdir -p dist/pkg
-	cp target/release/$(DEVIT_BIN) dist/pkg/
+	cp target/release/$(DEVIT_BIN_NAME) dist/pkg/
 	[ -f LICENSE ] && cp LICENSE dist/pkg/ || true
 	[ -f README.md ] && cp README.md dist/pkg/ || true
-	tar -czf dist/$(DEVIT_BIN)-$(TAG)-linux-x86_64.tar.gz -C dist pkg
-	cd dist && sha256sum $(DEVIT_BIN)-$(TAG)-linux-x86_64.tar.gz > $(DEVIT_BIN)-$(TAG)-linux-x86_64.sha256
-	@ls -lah dist && echo "SHA256:" && cat dist/$(DEVIT_BIN)-$(TAG)-linux-x86_64.sha256
+	tar -czf dist/$(DEVIT_BIN_NAME)-$(TAG)-linux-x86_64.tar.gz -C dist pkg
+	( cd dist && sha256sum $(DEVIT_BIN_NAME)-$(TAG)-linux-x86_64.tar.gz > $(DEVIT_BIN_NAME)-$(TAG)-linux-x86_64.sha256 )
+	@ls -lah dist && echo "SHA256:" && cat dist/$(DEVIT_BIN_NAME)-$(TAG)-linux-x86_64.sha256
 
 check-cli:
 	cargo fmt --all -- --check
