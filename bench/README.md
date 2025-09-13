@@ -51,7 +51,15 @@ python generate_predictions.py \
   --allow-empty
 
 ### Évaluation (optionnelle dans le smoke)
-make bench-eval
+- En local (harness Python, nécessite conda/pip prêts):
+  make bench-eval
+
+- En Docker (recommandé si votre Python n'est pas compatible):
+  make bench-eval-docker
+
+Variables utiles: LOG_DIR, TESTBED, WORKERS, TIMEOUT, IMAGE
+Exemple:
+  WORKERS=2 TIMEOUT=900 make bench-eval-docker
 
 Les résultats (taux de résolution, logs) seront affichés par le harness.
 

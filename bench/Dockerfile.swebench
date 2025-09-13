@@ -1,0 +1,9 @@
+FROM python:3.10-slim
+
+RUN pip install --no-cache-dir swebench==1.1.2
+
+WORKDIR /work
+
+# Default entrypoint: run the harness; arguments are passed at runtime
+ENTRYPOINT ["python", "-m", "swebench.harness.run_evaluation"]
+
