@@ -41,6 +41,15 @@ plan:
 watch:
 	cargo run -p devit -- watch
 
+bench-ids50:
+	python - <<'PY'
+from datasets import load_dataset
+ds = load_dataset('princeton-nlp/SWE-bench_Lite', split='test')
+ids = ds.select(range(50))['instance_id']
+open('bench/instances_lite_50.txt','w').write('\n'.join(ids)+'\n')
+print('OK -> bench/instances_lite_50.txt:', len(ids), 'ids')
+PY
+
 bench-smoke:
 	set -e
 	cargo build -p devit --release

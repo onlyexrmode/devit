@@ -1,0 +1,27 @@
+diff --git a/devit_patch_placeholder/README.md b/devit_patch_placeholder/README.md
+new file mode 100644
+index 0000000..e69de29
+--- /dev/null
++++ b/devit_patch_placeholder/README.md
+@@ -0,0 +1,6 @@
++DevIt placeholder patch (empty context)
++
++This file is added to ensure that a unified diff can be applied
++even when the model produces no concrete code changes for a task.
++It is intentionally harmless and should not affect test outcomes.
++
+diff --git a/devit_patch_placeholder/devit_placeholder.py b/devit_patch_placeholder/devit_placeholder.py
+new file mode 100644
+index 0000000..8f5c1e2
+--- /dev/null
++++ b/devit_patch_placeholder/devit_placeholder.py
+@@ -0,0 +1,16 @@
++"""
++Minimal Python placeholder so that patch application can succeed
++without touching existing project files. Safe for most repositories.
++"""
++
++def devit_noop() -> None:
++    """No-op function added by DevIt placeholder patch."""
++    return None
+

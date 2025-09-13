@@ -63,6 +63,31 @@ Variables utiles: LOG_DIR, TESTBED, WORKERS, TIMEOUT, IMAGE
 Exemple:
   WORKERS=2 TIMEOUT=900 make bench-eval-docker
 
+### Échantillon 50 (split test)
+Générer la liste des 50 premiers IDs du split test:
+
+make bench-ids50
+
+Cela produit bench/instances_lite_50.txt. Vous pouvez ensuite lancer:
+
+cd bench && python generate_predictions.py \\
+  --instances instances_lite_50.txt \\
+  --output predictions.jsonl \\
+  --workdir ./workspaces \\
+  --devit-bin "$DEVIT_BIN" \\
+  --devit-config "$DEVIT_CONFIG" \\
+  --dataset princeton-nlp/SWE-bench_Lite \\
+  --split test 
+
+### Patch placeholder (optionnel)
+Un patch neutre est fourni pour des tests d'application:
+
+bench/patch_diff_vide.patch
+
+Il ajoute un répertoire devit_patch_placeholder/ avec un README et un fichier Python
+inoffensif. Vous pouvez l'appliquer manuellement dans un repo pour valider le pipeline
+si besoin.
+
 Résumé minimal
 Après l'évaluation, un résumé est affiché automatiquement:
 - nombre de prédictions (lignes dans predictions.jsonl)
