@@ -17,9 +17,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-rust@v1
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          rust-version: stable
+          components: clippy, rustfmt
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
@@ -46,9 +46,9 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-rust@v1
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          rust-version: stable
+          components: clippy, rustfmt
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
       - name: Build release
@@ -58,4 +58,3 @@ jobs:
         with:
           name: devit-${{ matrix.os }}
           path: target/release/devit
-
