@@ -8,6 +8,7 @@ use devit_common::Config;
 use devit_tools::{codeexec, git};
 use std::fs;
 use std::io::{stdin, Read};
+use sha2::{Digest, Sha256};
 
 #[derive(Parser, Debug)]
 #[command(name = "devit", version, about = "DevIt CLI - patch-only agent", long_about = None)]
@@ -116,7 +117,9 @@ async fn main() -> Result<()> {
             let _diff_head = patch.lines().take(60).collect::<Vec<_>>().join("\n");
             // Pas de goal ici → fallback générique
             let commit_msg = default_commit_msg(None, &summary);
-            if !git::commit(&commit_msg)? {
+            let attest = compute_attest_hash(&patch);
+            let full_msg = format!("{}\n\nDevIt-Attest: {}", commit_msg, attest);
+            if !git::commit(&full_msg)? {
                 anyhow::bail!("Échec git commit.");
             }
             let sha = git::head_short().unwrap_or_default();
@@ -174,14 +177,17 @@ async fn main() -> Result<()> {
             if !git::apply_index(&patch)? {
                 anyhow::bail!("Échec git apply --index (et fallback --3way).");
             }
-            let diff_head = patch.lines().take(60).collect::<Vec<_>>().join("\n");
+            let diff_head = patch.lines().take(60).collect::<Vec<_>>().join("
+");
             let commit_msg = agent
                 .commit_message(&goal, &summary, &diff_head)
                 .await
                 .ok()
                 .filter(|s| !s.trim().is_empty())
                 .unwrap_or_else(|| default_commit_msg(Some(&goal), &summary));
-            if !git::commit(&commit_msg)? {
+            let attest = compute_attest_hash(&patch);
+            let full_msg = format!("{}\n\nDevIt-Attest: {}", commit_msg, attest);
+            if !git::commit(&full_msg)? {
                 anyhow::bail!("Échec git commit.");
             }
             let sha = git::head_short().unwrap_or_default();
@@ -286,4 +292,11 @@ fn default_commit_msg(goal: Option<&str>, summary: &str) -> String {
         Some(g) if !g.trim().is_empty() => format!("feat: {} ({})", g.trim(), summary),
         _ => format!("chore: apply patch ({})", summary),
     }
+}
+
+fn compute_attest_hash(patch: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(patch.as_bytes());
+    let out = hasher.finalize();
+    hex::encode(out)
 }

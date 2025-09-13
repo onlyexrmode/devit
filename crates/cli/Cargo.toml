@@ -22,3 +22,5 @@ walkdir = { workspace = true }
 devit-common = { path = "../common" }
 devit-agent = { path = "../agent" }
 devit-tools = { path = "../tools" }
+sha2 = { workspace = true }
+hex = { workspace = true }

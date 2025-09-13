@@ -1,126 +1,50 @@
-Roadmap (4 sprints, 2 semaines)
+**v0.2 — “Confiance & interop”**
+MCP bi-directionnel : DevIt consomme ET expose des outils (fs patch-only, shell sandboxé).
+Plugins WASM/WASI : outils (grep, formatter, linter) isolés, chargeables à chaud.
+Contexte intelligent : map du repo (ripgrep + tree-sitter), sélection de fichiers pertinents, cache d’index local.
+Approvals granulaires : règles par outil (“git yes, shell ask”), profils safe|std|danger.
+Provenance minimale : commit footer DevIt-Attest: <hash> + journal JSONL signé, git notes optionnel.
 
-S1 — Patch-only MVP (CLI + backend + apply)
+**v0.3 — “Qualité des patchs”**
+Test-aware : sélection de tests impactés (heuristique par diff), relance ciblée.
+Pre-commit intégré : format/linters avant apply, refus si violations critiques.
+Merge 3-way assisté : explication et mini-UI pour résoudre conflits, toujours patch-first.
+Génération de messages de commit : LLM + règles Conventional Commits + scope auto (déduit du path).
+Rapports : export SARIF (lint/tests) + JUnit (résumé) pour CI.
 
-suggest : génère un diff unifié (déjà dans le squelette).
+**v0.4 — “Sécurité & supply-chain”**
+Sandbox sérieuse : bwrap/firejail + quotas CPU/RAM, net policy off|egress|full.
+SBOM CycloneDX des deps touchées + attestation SLSA-lite sur le diff (hash, horodatage).
+Gestion des secrets : lecture par env/agent interdites par défaut (allow-list explicite).
+Mode lecture seule total : simulation de patch (dry-run) avec métriques.
 
-apply : applique le diff via git apply (dry-run → approval → apply → commit).
+**v0.5 — “Expérience dev”**
+TUI avancée : timeline d’actions, approbations in-line, diff viewer, replays.
+Intégrations IDE (VS Code/JetBrains) : DevIt comme “tool server” (MCP/LSP bridge).
+Recettes : commandes prêtes “ajoute CI”, “porte en Rust 1.81”, “migre Jest→Vitest”, etc.
 
-Commits conventionnels générés par LLM (feat: …, fix: …).
+**v0.6 — “Bench & crédibilité”**
+SWE-bench Lite-50 automatisé (cron GitHub Actions self-hosté ou doc pipeline local).
+SWE-bench Verified/Live en option (doc pas-à-pas, scripts fournis).
+Dashboard de scores : taux de résolution, temps moyen, taille de patch, régressions.
 
-Config devit.toml lue et validée.
-Critères de succès : devit --goal "…" suggest . | devit apply - modifie le repo et commit proprement.
+**v1.0 — “Prod-ready”**
+Stabilité : compat multi-OS, jeux d’essais end-to-end.
+Packaging : bins signés, Homebrew/Apt, release notes carrées.
+Gouvernance : CONTRIBUTING, RFCs, tri des issues, “good first issue”.
 
-S2 — Approvals + Sandbox
+**2 démos “qui font tilt”**
+Patch-only sur un bug réel (lib Python/TS populaire) : propose le diff, tests impactés, message de commit propre, attestation.
+Migration ciblée (format/CI/linter) sur un repo moyen : DevIt produit une série de petits commits atomiques + plan YAML.
 
-Modes d’approbation : untrusted | on-failure | on-request | never.
+**OKRs (simples, mesurables)**
+Qualité patch : ≥80 % des diffs compilent sans retouche sur un set interne (20 issues).
+Bench : SWE-bench Lite-50 ≥X % (on fixe X après premier run).
+Sécurité : 100 % des actions sensibles loggées + sandboxées par défaut.
 
-Sandbox niveaux : read-only | workspace-write (bwrap/wasmtime intégré derrière un trait ; fallback “no sandbox”).
-
-Journal JSONL des événements (AskApproval, ToolCall, Diff, Error).
-Critères : en read-only, apply refuse ; en workspace-write, demande confirmation avec résumé fichiers/commandes.
-
-S3 — Codeexec + Update Plan
-
-codeexec : détection stack (Cargo/npm/CMake) + build/test + timeout + parse JUnit si présent.
-
-update_plan.yaml : étapes, statut, liens commit ; affichage TUI minimal.
-
-Politique on-failure : si test échoue → propose patch correctif.
-Critères : devit run --goal "ajoute test" → exécute tests, en cas d’échec propose diff.
-
-S4 — Interop & Qualif
-
-Backends additionnels (LM Studio / llama.cpp server via endpoint OpenAI-like).
-
-MCP client minimal (consommer un outil externe).
-
-Packaging binaire + CI GitHub Actions + README solide + licence Apache-2.0.
-Critères : binaire téléchargeable, CI verte, README comparatif, exemple de session reproductible.
-
-
-Backlog d’issues (prêtes à coder)
-
-CLI: wire “apply”
-
-☐ Lire diff depuis stdin/fichier.
-
-☐ git apply --check (dry-run) → collecter fichiers touchés.
-
-☐ Émettre AskApproval avec résumé (N fichiers, paths).
-
-☐ Si OK: git apply --index, git commit -m "<msg>".
-
-DoD: fonctionne sur repo test, rollback propre si erreur.
-
-Commit message génératif
-
-☐ Prompt LLM court (conventional commits), fallback: feat: <goal>.
-
-DoD: message ≤ 72 chars + body optionnel.
-
-Config & validation
-
-☐ devit.toml → structs + erreurs lisibles, valeurs par défaut.
-
-DoD: démarrage refuse config invalide, affiche aide.
-
-Approval policy (MVP)
-
-☐ untrusted: toujours demander avant write/exec.
-
-☐ on-request: jamais auto (uniquement sur commande explicite).
-
-DoD: tests unitaires sur table de décision.
-
-Sandbox abstraction
-
-☐ Trait Sandbox { dry_run(cmd), exec(cmd), fs_write(...) }.
-
-☐ Impl “noop” + stub bwrap (si présent dans PATH).
-
-DoD: en read-only, fs_write échoue avec message clair.
-
-Audit JSONL
-
-☐ ~/.devit/logs/YYYY-MM-DD.jsonl (Event horodaté).
-
-DoD: chaque apply laisse une trace ToolCall/AskApproval/Result.
-
-Context builder v1
-
-☐ Sélection fichiers pertinents: .rs, Cargo.toml, README, diff git status.
-
-DoD: taille ≤ N Ko, configurable.
-
-Codeexec runner v0
-
-☐ Détecter cargo/npm/cmake.
-
-☐ --dry-run + timeout + capture stdout/stderr.
-
-DoD: devit test exécute la bonne commande selon projet.
-
-TUI minimal (ratatui)
-
-☐ Fenêtre streaming avec sections: Plan | Diff | Logs | Prompts.
-
-DoD: devit run affiche événements en direct.
-
-CI GitHub Actions
-
-☐ Build Linux/macOS, clippy, fmt, tests.
-
-DoD: badge vert + artefacts binaires pour release.
-
-Docs & README
-
-☐ Quickstart 60s, valeurs clés, comparatif succinct.
-
-DoD: un dev peut reproduire la démo offline.
-
-Release v0.1.0 (MVP)
-
-☐ Tag, changelog, binaire, checksum.
-
-DoD: installation mono-binaire documentée.
+**What Codex fait après l’alpha (ordre)**
+v0.2 : MCP client/serveur minimal + loader plugins WASM + contexte intelligent (ripgrep/tree-sitter).
+v0.3 : pre-commit + test selection + merge assisté + SARIF/JUnit.
+v0.4 : sandbox hardening + SBOM/attestation + secrets policy.
+v0.5 : TUI avancée + adaptateur VS Code (MCP/LSP) + recettes.
+v0.6 : scripts SWE-bench (Lite-50, Verified), dashboard CSV/MD.
