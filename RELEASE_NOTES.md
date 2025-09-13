@@ -6,6 +6,8 @@
 - Context map: `devit context map .` → `.devit/index.json` (respect .gitignore; ignore `.devit/`, `target/`, `bench/`)
 - Journal JSONL signé (HMAC) sous `.devit/journal.jsonl`; option `git.use_notes` pour `git notes`
 - CI stricte: fmt/clippy/tests avec timeout; validation Conventional Commits; politique nommage de branches
+- Expérimental (feature-gated): binaire `devit-mcp` (client MCP stdio)
+  - Build/run: `cargo run -p devit-cli --features experimental --bin devit-mcp -- --help`
 
 ## v0.1.0-alpha1
 - CLI patch-only : `suggest`, `apply`, `run`, `test`
