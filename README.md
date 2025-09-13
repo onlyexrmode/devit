@@ -7,6 +7,12 @@ Rust CLI dev agent — patch-only, sandboxed, with local LLMs (Ollama/LM Studio)
 
 Authors: naskel and GPT‑5 Thinking (ChatGPT)
 
+Experimental
+- The optional binary `devit-mcp` (stdio MCP client) is feature-gated and not included in release archives.
+- Build/run locally with:
+  - `cargo run -p devit-cli --features experimental --bin devit-mcp -- --help`
+- Status: prototype for tooling interop; API and behavior may change.
+
 v0.2‑rc highlights (Confiance & interop)
 - Tools JSON I/O: `devit tool list` and `echo '{"name":...,"args":{...}}' | devit tool call -`
 - Sandboxed `shell_exec`: safe‑list + best‑effort `net=off`, output returned as JSON
