@@ -63,15 +63,16 @@ Variables utiles: LOG_DIR, TESTBED, WORKERS, TIMEOUT, IMAGE
 Exemple:
   WORKERS=2 TIMEOUT=900 make bench-eval-docker
 
-### Échantillon 50 (split test)
-Générer la liste des 50 premiers IDs du split test:
+### Échantillon (split test)
+Générer la liste des N premiers IDs du split test (défaut 50):
 
-make bench-ids50
+make bench-ids            # N=50 par défaut
+make bench-ids N=50       # explicite
 
-Cela produit bench/instances_lite_50.txt. Vous pouvez ensuite lancer:
+Cela produit bench/instances_lite_<N>.txt. Vous pouvez ensuite lancer:
 
 cd bench && python generate_predictions.py \\
-  --instances instances_lite_50.txt \\
+  --instances instances_lite_<N>.txt \\
   --output predictions.jsonl \\
   --workdir ./workspaces \\
   --devit-bin "$DEVIT_BIN" \\

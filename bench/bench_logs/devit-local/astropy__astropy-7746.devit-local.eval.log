@@ -1,0 +1,59 @@
+[astropy__astropy__1.3] [astropy__astropy-7746] Task Metadata:
+	- Instance ID: astropy__astropy-7746
+	- Testbed: /work/bench/bench/testbed/devit-local/astropy/1.3/tmpwzqtfksr/astropy__astropy__1.3
+	- Virtual Env.: astropy__astropy__1.3
+	- Evaluation Model: devit-local 
+[astropy__astropy__1.3] [astropy__astropy-7746] Command: git ls-files --ignored --exclude-standard -o -z | xargs -0 -r rm -rf 
+[astropy__astropy__1.3] [astropy__astropy-7746] Subprocess args: {"check": true, "shell": false, "capture_output": false, "text": true, "env": {"CONDA_PKGS_DIRS": "/work/bench/bench/testbed/devit-local/astropy/1.3/tmpg741qfkm/miniconda3/cache"}, "stdout": -1, "stderr": -2} 
+[astropy__astropy__1.3] [astropy__astropy-7746] Command: git restore . 
+[astropy__astropy__1.3] [astropy__astropy-7746] Subprocess args: {"check": true, "shell": false, "capture_output": false, "text": true, "env": {"CONDA_PKGS_DIRS": "/work/bench/bench/testbed/devit-local/astropy/1.3/tmpg741qfkm/miniconda3/cache"}, "stdout": -1, "stderr": -2} 
+[astropy__astropy__1.3] [astropy__astropy-7746] Std. Output:
+ 
+[astropy__astropy__1.3] [astropy__astropy-7746] Return Code: 0 
+[astropy__astropy__1.3] [astropy__astropy-7746] Command: git reset HEAD . 
+[astropy__astropy__1.3] [astropy__astropy-7746] Subprocess args: {"check": true, "shell": false, "capture_output": false, "text": true, "env": {"CONDA_PKGS_DIRS": "/work/bench/bench/testbed/devit-local/astropy/1.3/tmpg741qfkm/miniconda3/cache"}, "stdout": -1, "stderr": -2} 
+[astropy__astropy__1.3] [astropy__astropy-7746] Std. Output:
+ 
+[astropy__astropy__1.3] [astropy__astropy-7746] Return Code: 0 
+[astropy__astropy__1.3] [astropy__astropy-7746] Command: git clean -fdx 
+[astropy__astropy__1.3] [astropy__astropy-7746] Subprocess args: {"check": true, "shell": false, "capture_output": false, "text": true, "env": {"CONDA_PKGS_DIRS": "/work/bench/bench/testbed/devit-local/astropy/1.3/tmpg741qfkm/miniconda3/cache"}, "stdout": -1, "stderr": -2} 
+[astropy__astropy__1.3] [astropy__astropy-7746] Std. Output:
+ 
+[astropy__astropy__1.3] [astropy__astropy-7746] Return Code: 0 
+[astropy__astropy__1.3] [astropy__astropy-7746] Command: git -c advice.detachedHead=false checkout d5bd3f68bb6d5ce3a61bdce9883ee750d1afade5 
+[astropy__astropy__1.3] [astropy__astropy-7746] Subprocess args: {"check": true, "shell": false, "capture_output": false, "text": true, "env": {"CONDA_PKGS_DIRS": "/work/bench/bench/testbed/devit-local/astropy/1.3/tmpg741qfkm/miniconda3/cache"}, "stdout": -1, "stderr": -2} 
+[astropy__astropy__1.3] [astropy__astropy-7746] Std. Output:
+HEAD is now at d5bd3f68b Merge pull request #7742 from astrofrog/travis-egg-info
+ 
+[astropy__astropy__1.3] [astropy__astropy-7746] Return Code: 0 
+[astropy__astropy__1.3] [astropy__astropy-7746] Reset task environment to d5bd3f68bb6d5ce3a61bdce9883ee750d1afade5 
+[astropy__astropy__1.3] [astropy__astropy-7746] Command: git apply -v /work/bench/bench/testbed/devit-local/astropy/1.3/tmpwzqtfksr/temp_astropy__astropy-7746_pred_try.patch 
+[astropy__astropy__1.3] [astropy__astropy-7746] Subprocess args: {"check": false, "shell": false, "capture_output": false, "text": true, "env": {"CONDA_PKGS_DIRS": "/work/bench/bench/testbed/devit-local/astropy/1.3/tmpg741qfkm/miniconda3/cache"}, "stdout": -1, "stderr": -2} 
+[astropy__astropy__1.3] [astropy__astropy-7746] Std. Output:
+error: corrupt patch at line 14
+ 
+[astropy__astropy__1.3] [astropy__astropy-7746] Return Code: 128 
+[astropy__astropy__1.3] [astropy__astropy-7746] Apply patch failed (pred_try) 
+>>>>> Patch Apply Failed; (pred_try)
+Output:
+error: corrupt patch at line 14
+[astropy__astropy__1.3] [astropy__astropy-7746] Command: git apply -v /work/bench/bench/testbed/devit-local/astropy/1.3/tmpwzqtfksr/temp_astropy__astropy-7746_pred_minimal_try.patch 
+[astropy__astropy__1.3] [astropy__astropy-7746] Subprocess args: {"check": false, "shell": false, "capture_output": false, "text": true, "env": {"CONDA_PKGS_DIRS": "/work/bench/bench/testbed/devit-local/astropy/1.3/tmpg741qfkm/miniconda3/cache"}, "stdout": -1, "stderr": -2} 
+[astropy__astropy__1.3] [astropy__astropy-7746] Std. Output:
+Checking patch astropy/wcs/wcs.py...
+error: while searching for:
+            return _return_list_of_arrays(axes, origin)
+
+error: patch failed: astropy/wcs/wcs.py:1426
+error: astropy/wcs/wcs.py: patch does not apply
+ 
+[astropy__astropy__1.3] [astropy__astropy-7746] Return Code: 1 
+[astropy__astropy__1.3] [astropy__astropy-7746] Apply patch failed (pred_minimal_try) 
+>>>>> Patch Apply Failed; (pred_minimal_try)
+Output:
+Checking patch astropy/wcs/wcs.py...
+error: while searching for:
+            return _return_list_of_arrays(axes, origin)
+
+error: patch failed: astropy/wcs/wcs.py:1426
+error: astropy/wcs/wcs.py: patch does not apply

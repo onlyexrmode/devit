@@ -1,49 +1,49 @@
 [astropy__astropy__5.1] [astropy__astropy-14365] Task Metadata:
 	- Instance ID: astropy__astropy-14365
-	- Testbed: /work/bench/bench/testbed/devit-local/astropy/5.1/tmpavy_jj86/astropy__astropy__5.1
+	- Testbed: /work/bench/bench/testbed/devit-local/astropy/5.1/tmpyzqf645v/astropy__astropy__5.1
 	- Virtual Env.: astropy__astropy__5.1
 	- Evaluation Model: devit-local 
 [astropy__astropy__5.1] [astropy__astropy-14365] Command: git ls-files --ignored --exclude-standard -o -z | xargs -0 -r rm -rf 
-[astropy__astropy__5.1] [astropy__astropy-14365] Subprocess args: {"check": true, "shell": false, "capture_output": false, "text": true, "env": {"CONDA_PKGS_DIRS": "/work/bench/bench/testbed/devit-local/astropy/5.1/tmp9h19xl78/miniconda3/cache"}, "stdout": -1, "stderr": -2} 
+[astropy__astropy__5.1] [astropy__astropy-14365] Subprocess args: {"check": true, "shell": false, "capture_output": false, "text": true, "env": {"CONDA_PKGS_DIRS": "/work/bench/bench/testbed/devit-local/astropy/5.1/tmpj9rc6wxr/miniconda3/cache"}, "stdout": -1, "stderr": -2} 
 [astropy__astropy__5.1] [astropy__astropy-14365] Command: git restore . 
-[astropy__astropy__5.1] [astropy__astropy-14365] Subprocess args: {"check": true, "shell": false, "capture_output": false, "text": true, "env": {"CONDA_PKGS_DIRS": "/work/bench/bench/testbed/devit-local/astropy/5.1/tmp9h19xl78/miniconda3/cache"}, "stdout": -1, "stderr": -2} 
+[astropy__astropy__5.1] [astropy__astropy-14365] Subprocess args: {"check": true, "shell": false, "capture_output": false, "text": true, "env": {"CONDA_PKGS_DIRS": "/work/bench/bench/testbed/devit-local/astropy/5.1/tmpj9rc6wxr/miniconda3/cache"}, "stdout": -1, "stderr": -2} 
 [astropy__astropy__5.1] [astropy__astropy-14365] Std. Output:
  
 [astropy__astropy__5.1] [astropy__astropy-14365] Return Code: 0 
 [astropy__astropy__5.1] [astropy__astropy-14365] Command: git reset HEAD . 
-[astropy__astropy__5.1] [astropy__astropy-14365] Subprocess args: {"check": true, "shell": false, "capture_output": false, "text": true, "env": {"CONDA_PKGS_DIRS": "/work/bench/bench/testbed/devit-local/astropy/5.1/tmp9h19xl78/miniconda3/cache"}, "stdout": -1, "stderr": -2} 
+[astropy__astropy__5.1] [astropy__astropy-14365] Subprocess args: {"check": true, "shell": false, "capture_output": false, "text": true, "env": {"CONDA_PKGS_DIRS": "/work/bench/bench/testbed/devit-local/astropy/5.1/tmpj9rc6wxr/miniconda3/cache"}, "stdout": -1, "stderr": -2} 
 [astropy__astropy__5.1] [astropy__astropy-14365] Std. Output:
  
 [astropy__astropy__5.1] [astropy__astropy-14365] Return Code: 0 
 [astropy__astropy__5.1] [astropy__astropy-14365] Command: git clean -fdx 
-[astropy__astropy__5.1] [astropy__astropy-14365] Subprocess args: {"check": true, "shell": false, "capture_output": false, "text": true, "env": {"CONDA_PKGS_DIRS": "/work/bench/bench/testbed/devit-local/astropy/5.1/tmp9h19xl78/miniconda3/cache"}, "stdout": -1, "stderr": -2} 
+[astropy__astropy__5.1] [astropy__astropy-14365] Subprocess args: {"check": true, "shell": false, "capture_output": false, "text": true, "env": {"CONDA_PKGS_DIRS": "/work/bench/bench/testbed/devit-local/astropy/5.1/tmpj9rc6wxr/miniconda3/cache"}, "stdout": -1, "stderr": -2} 
 [astropy__astropy__5.1] [astropy__astropy-14365] Std. Output:
  
 [astropy__astropy__5.1] [astropy__astropy-14365] Return Code: 0 
 [astropy__astropy__5.1] [astropy__astropy-14365] Command: git -c advice.detachedHead=false checkout 7269fa3e33e8d02485a647da91a5a2a60a06af61 
-[astropy__astropy__5.1] [astropy__astropy-14365] Subprocess args: {"check": true, "shell": false, "capture_output": false, "text": true, "env": {"CONDA_PKGS_DIRS": "/work/bench/bench/testbed/devit-local/astropy/5.1/tmp9h19xl78/miniconda3/cache"}, "stdout": -1, "stderr": -2} 
+[astropy__astropy__5.1] [astropy__astropy-14365] Subprocess args: {"check": true, "shell": false, "capture_output": false, "text": true, "env": {"CONDA_PKGS_DIRS": "/work/bench/bench/testbed/devit-local/astropy/5.1/tmpj9rc6wxr/miniconda3/cache"}, "stdout": -1, "stderr": -2} 
 [astropy__astropy__5.1] [astropy__astropy-14365] Std. Output:
 HEAD is now at 7269fa3e3 Merge pull request #14013 from WilliamJamieson/deprecate/Voigt1D_humlicek2_option
  
 [astropy__astropy__5.1] [astropy__astropy-14365] Return Code: 0 
 [astropy__astropy__5.1] [astropy__astropy-14365] Reset task environment to 7269fa3e33e8d02485a647da91a5a2a60a06af61 
-[astropy__astropy__5.1] [astropy__astropy-14365] Command: git apply -v /work/bench/bench/testbed/devit-local/astropy/5.1/tmpavy_jj86/temp_astropy__astropy-14365_pred_try.patch 
-[astropy__astropy__5.1] [astropy__astropy-14365] Subprocess args: {"check": false, "shell": false, "capture_output": false, "text": true, "env": {"CONDA_PKGS_DIRS": "/work/bench/bench/testbed/devit-local/astropy/5.1/tmp9h19xl78/miniconda3/cache"}, "stdout": -1, "stderr": -2} 
+[astropy__astropy__5.1] [astropy__astropy-14365] Command: git apply -v /work/bench/bench/testbed/devit-local/astropy/5.1/tmpyzqf645v/temp_astropy__astropy-14365_pred_try.patch 
+[astropy__astropy__5.1] [astropy__astropy-14365] Subprocess args: {"check": false, "shell": false, "capture_output": false, "text": true, "env": {"CONDA_PKGS_DIRS": "/work/bench/bench/testbed/devit-local/astropy/5.1/tmpj9rc6wxr/miniconda3/cache"}, "stdout": -1, "stderr": -2} 
 [astropy__astropy__5.1] [astropy__astropy-14365] Std. Output:
-error: corrupt patch at line 9
+error: patch fragment without header at line 15: @@ -36,7 +36,7 @@
  
 [astropy__astropy__5.1] [astropy__astropy-14365] Return Code: 128 
 [astropy__astropy__5.1] [astropy__astropy-14365] Apply patch failed (pred_try) 
 >>>>> Patch Apply Failed; (pred_try)
 Output:
-error: corrupt patch at line 9
-[astropy__astropy__5.1] [astropy__astropy-14365] Command: git apply -v /work/bench/bench/testbed/devit-local/astropy/5.1/tmpavy_jj86/temp_astropy__astropy-14365_pred_minimal_try.patch 
-[astropy__astropy__5.1] [astropy__astropy-14365] Subprocess args: {"check": false, "shell": false, "capture_output": false, "text": true, "env": {"CONDA_PKGS_DIRS": "/work/bench/bench/testbed/devit-local/astropy/5.1/tmp9h19xl78/miniconda3/cache"}, "stdout": -1, "stderr": -2} 
+error: patch fragment without header at line 15: @@ -36,7 +36,7 @@
+[astropy__astropy__5.1] [astropy__astropy-14365] Command: git apply -v /work/bench/bench/testbed/devit-local/astropy/5.1/tmpyzqf645v/temp_astropy__astropy-14365_pred_minimal_try.patch 
+[astropy__astropy__5.1] [astropy__astropy-14365] Subprocess args: {"check": false, "shell": false, "capture_output": false, "text": true, "env": {"CONDA_PKGS_DIRS": "/work/bench/bench/testbed/devit-local/astropy/5.1/tmpj9rc6wxr/miniconda3/cache"}, "stdout": -1, "stderr": -2} 
 [astropy__astropy__5.1] [astropy__astropy-14365] Std. Output:
-error: No valid patches in input (allow with "--allow-empty")
+error: patch fragment without header at line 7: @@ -38,2 +38,2 @@
  
 [astropy__astropy__5.1] [astropy__astropy-14365] Return Code: 128 
 [astropy__astropy__5.1] [astropy__astropy-14365] Apply patch failed (pred_minimal_try) 
 >>>>> Patch Apply Failed; (pred_minimal_try)
 Output:
-error: No valid patches in input (allow with "--allow-empty")
+error: patch fragment without header at line 7: @@ -38,2 +38,2 @@

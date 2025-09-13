@@ -42,13 +42,18 @@ watch:
 	cargo run -p devit -- watch
 
 bench-ids50:
-	python - <<'PY'
-from datasets import load_dataset
-ds = load_dataset('princeton-nlp/SWE-bench_Lite', split='test')
-ids = ds.select(range(50))['instance_id']
-open('bench/instances_lite_50.txt','w').write('\n'.join(ids)+'\n')
-print('OK -> bench/instances_lite_50.txt:', len(ids), 'ids')
-PY
+	# Ensure Python deps
+	python3 - <<-'PY' || (python3 -m venv bench/.venv && bench/.venv/bin/pip install -U pip && bench/.venv/bin/pip install -r bench/requirements.txt datasets gitpython tqdm)
+	from datasets import load_dataset
+	PY
+	# Generate IDs
+	bench/.venv/bin/python - <<-'PY'
+	from datasets import load_dataset
+	ds = load_dataset('princeton-nlp/SWE-bench_Lite', split='test')
+	ids = ds.select(range(50))['instance_id']
+	open('bench/instances_lite_50.txt','w').write('\n'.join(ids)+'\n')
+	print('OK -> bench/instances_lite_50.txt:', len(ids), 'ids')
+	PY
 
 bench-smoke:
 	set -e
@@ -57,7 +62,7 @@ bench-smoke:
 	export DEVIT_CONFIG="$(PWD)/bench/devit.bench.toml"
 	export DEVIT_BACKEND_URL="http://localhost:11434/v1"
 	export DEVIT_TIMEOUT_SECS=120
-	python - <<-'PY'
+	python3 - <<-'PY'
 	from datasets import load_dataset
 	import os
 	ds = load_dataset('princeton-nlp/SWE-bench_Lite', split='test')
@@ -98,3 +103,25 @@ check: fmt-check clippy
 verify: check build test
 
 ci: verify
+
+# Generic IDs generator: N defaults to 50 (usage: make bench-ids N=50)
+bench-ids:
+	set -e
+	N=${N:-50}
+	# ensure venv & deps
+	if [ ! -x bench/.venv/bin/python ]; then \
+	  python3 -m venv bench/.venv; \
+	  bench/.venv/bin/pip install -U pip; \
+	  bench/.venv/bin/pip install -r bench/requirements.txt datasets gitpython tqdm; \
+	fi
+	# generate ids
+	bench/.venv/bin/python - <<-'PY'
+	import os
+	from datasets import load_dataset
+	N = int(os.environ.get('N','50'))
+	ds = load_dataset('princeton-nlp/SWE-bench_Lite', split='test')
+	ids = ds.select(range(min(N, len(ds))))['instance_id']
+	path = f'bench/instances_lite_{N}.txt'
+	open(path,'w').write('\n'.join(ids)+'\n')
+	print('OK ->', path, ':', len(ids), 'ids')
+	PY
