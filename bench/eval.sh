@@ -27,4 +27,4 @@ python -m swebench.harness.run_evaluation \
   --log_dir "$LOG_DIR" \
   --num_processes "$WORKERS" \
   --timeout "$TIMEOUT" \
-  --run_id "$RUN_ID"
+  --log_suffix "$RUN_ID"
