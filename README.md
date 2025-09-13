@@ -18,6 +18,7 @@ English (EN)
 - Installation
   - Requirements: Rust stable, `git`
   - Build: `cargo build --workspace`
+  - Makefile shortcuts: `make build`, `make test`, `make fmt-check`, `make smoke`
 - Configuration (`devit.toml`)
   - `[backend]`: `kind`, `base_url`, `model`, `api_key`
   - `[policy]`: `approval = untrusted|on-request|on-failure|never`, `sandbox = read-only|workspace-write|danger-full-access`
@@ -67,6 +68,7 @@ Français (FR)
 - Installation
   - Prérequis: Rust stable, `git`
   - Build: `cargo build --workspace`
+  - Raccourcis Makefile: `make build`, `make test`, `make fmt-check`, `make smoke`
 - Configuration (`devit.toml`)
   - `[backend]`: `kind`, `base_url`, `model`, `api_key`
   - `[policy]`: `approval = untrusted|on-request|on-failure|never`, `sandbox = read-only|workspace-write|danger-full-access`
