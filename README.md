@@ -13,6 +13,8 @@ v0.2‑rc highlights (Confiance & interop)
 - `fs_patch_apply`: `check_only` and `mode: index|worktree` via JSON args
 - Context map: `devit context map .` → `.devit/index.json` (respects .gitignore; ignores `.devit/`, `target/`, `bench/`)
 - Journal JSONL signé (HMAC) sous `.devit/journal.jsonl`; option `git.use_notes`
+- Experimental (feature-gated): `devit-mcp` (MCP stdio client). Build/run with:
+  - `cargo run -p devit-cli --features experimental --bin devit-mcp -- --help`
 
 English (EN)
 - Quickstart
@@ -44,6 +46,9 @@ English (EN)
   - `echo '{"name":"shell_exec","args":{"cmd":"ls -1 | head"}}' | devit tool call -` → sandboxed shell (JSON I/O)
   - `echo '{"name":"fs_patch_apply","args":{"patch":"<DIFF>","check_only":true}}' | devit tool call -` → dry‑run patch
   - `devit context map .` → writes `.devit/index.json`
+  - Experimental: `devit-mcp` (stdio MCP client)
+    - `cargo run -p devit-cli --features experimental --bin devit-mcp -- --cmd '<server cmd>' --handshake-only`
+    - `cargo run -p devit-cli --features experimental --bin devit-mcp -- --cmd '<server cmd>' --echo "hello"`
   - `devit plan` → list `update_plan.yaml`
   - `devit watch [--diff PATCH.diff]` → continuous TUI (Plan | Diff | Logs)
 - Approval policies
@@ -98,6 +103,9 @@ Français (FR)
   - `echo '{"name":"shell_exec","args":{"cmd":"ls -1 | head"}}' | devit tool call -` → shell sandboxé (I/O JSON)
   - `echo '{"name":"fs_patch_apply","args":{"patch":"<DIFF>","check_only":true}}' | devit tool call -` → dry‑run du patch
   - `devit context map .` → écrit `.devit/index.json`
+  - Expérimental: `devit-mcp` (client MCP stdio)
+    - `cargo run -p devit-cli --features experimental --bin devit-mcp -- --cmd '<serveur MCP>' --handshake-only`
+    - `cargo run -p devit-cli --features experimental --bin devit-mcp -- --cmd '<serveur MCP>' --echo "hello"`
   - `devit plan` → liste `update_plan.yaml`
   - `devit watch [--diff PATCH.diff]` → TUI continu (Plan | Diff | Logs)
 - Policies d’approbation

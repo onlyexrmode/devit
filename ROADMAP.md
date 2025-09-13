@@ -4,6 +4,7 @@ v0.2-rc (pre-release) livré:
 - fs_patch_apply (check-only + index/worktree) via I/O JSON
 - context map `.devit/index.json` (respect .gitignore; ignore `.devit/`, `target/`, `bench/`)
 - journal JSONL signé (HMAC) + option `git notes`
+- binaire expérimental `devit-mcp` (client MCP stdio), feature-gated `--features experimental`
 MCP bi-directionnel : DevIt consomme ET expose des outils (fs patch-only, shell sandboxé).
 Plugins WASM/WASI : outils (grep, formatter, linter) isolés, chargeables à chaud.
 Contexte intelligent : map du repo (ripgrep + tree-sitter), sélection de fichiers pertinents, cache d’index local.
