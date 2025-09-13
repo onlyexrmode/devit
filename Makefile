@@ -1,7 +1,13 @@
 .ONESHELL:
 SHELL := bash
 
-.PHONY: fmt fmt-check fmt-fix clippy lint test test-cli build build-release smoke ci check verify help
+# Package/binary names for CLI (override via env if needed)
+# Keep binary name `devit`; package is the CLI crate name.
+DEVIT_PKG ?= devit
+DEVIT_BIN ?= devit
+
+.PHONY: fmt fmt-check fmt-fix clippy lint test test-cli build build-release smoke ci check verify help \
+        build-cli run-cli release-cli check-cli ci-cli help-cli
 
 help:
 	@echo "Targets: fmt | fmt-check | fmt-fix | clippy | lint | test | test-cli | build | build-release | smoke | check | verify | ci"
@@ -103,6 +109,30 @@ check: fmt-check clippy
 verify: check build test
 
 ci: verify
+
+# ===== CLI-focused targets (safe, no side effects) =====
+build-cli:
+	cargo build -p $(DEVIT_PKG) --bin $(DEVIT_BIN) --verbose
+
+run-cli:
+	cargo run -p $(DEVIT_PKG) --bin $(DEVIT_BIN) -- --help
+
+release-cli:
+	cargo build -p $(DEVIT_PKG) --bin $(DEVIT_BIN) --release --verbose
+
+check-cli:
+	cargo fmt --all -- --check
+	cargo clippy --workspace --all-targets -- -D warnings
+	cargo test --workspace --all-targets --no-fail-fast -- --nocapture
+
+ci-cli: check-cli build-cli
+
+help-cli:
+	@echo "build-cli      : build $(DEVIT_BIN) from $(DEVIT_PKG)"
+	@echo "release-cli    : build release of $(DEVIT_BIN)"
+	@echo "run-cli        : run $(DEVIT_BIN) --help"
+	@echo "check-cli      : fmt + clippy -D warnings + tests"
+	@echo "ci-cli         : check-cli + build-cli"
 
 # Generic IDs generator: N defaults to 50 (usage: make bench-ids N=50)
 bench-ids:
