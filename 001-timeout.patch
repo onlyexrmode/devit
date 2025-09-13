@@ -1,0 +1,121 @@
+diff --git a/crates/cli/src/mcp.rs b/crates/cli/src/mcp.rs
+index a1b2c3d..e7f8a9b 100644
+--- a/crates/cli/src/mcp.rs
++++ b/crates/cli/src/mcp.rs
+@@ -1,6 +1,7 @@
+ // MCP client minimal (stdio) — expérimental.
+ // - Handshake: ping -> version -> capabilities
+ // - Tool call démo: echo
+ // - Timeouts via DEVIT_TIMEOUT_SECS (par message)
+ //
+ // Ce module est consommé par le binaire `devit-mcp` uniquement.
+ 
+ use anyhow::{anyhow, Context, Result};
+@@ -16,6 +17,24 @@ use std::time::Duration;
+ 
+ pub fn timeout_from_env() -> Duration
+ {
+     let secs = env::var("DEVIT_TIMEOUT_SECS")
+         .ok()
+         .and_then(|s| s.parse::<u64>().ok())
+         .unwrap_or(30);
+     Duration::from_secs(secs)
+ }
+ 
++/// Erreur sentinelle pour les délais dépassés (downcastable via anyhow).
++#[derive(Debug)]
++pub struct TimeoutErr;
++impl std::fmt::Display for TimeoutErr
++{
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
++    {
++        write!(f, "timeout waiting line")
++    }
++}
++impl std::error::Error for TimeoutErr {}
++
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ pub struct Capabilities
+ {
+@@ -116,8 +135,13 @@ impl McpClient
+     fn read_json_line_timeout(&mut self) -> Result<Value>
+     {
+         let (tx, rx) = mpsc::sync_channel::<Result<String>>(1);
+         let timeout = self.per_msg_timeout;
+         // On clone un pointeur vers un *mutable borrow* n'est pas
+         // possible; on lit depuis un thread avec un bloc scope.
+         let mut reader = self.stdout.by_ref().lines();
+         thread::spawn(move || {
+             let res = reader.next()
+                 .ok_or_else(|| anyhow!("eof from server"))
+                 .and_then(|r| r.map_err(|e| anyhow!(e)));
+             let _ = tx.send(res);
+         });
+-        let line = rx.recv_timeout(timeout)
+-            .map_err(|_| anyhow!("timeout waiting line"))??;
++        let line = match rx.recv_timeout(timeout) {
++            Ok(res) => res?,
++            Err(_e) => {
++                // Propager une erreur typée pour reconnaître le timeout.
++                return Err(TimeoutErr.into());
++            }
++        };
+         let v: Value = serde_json::from_str(&line)
+             .with_context(|| format!("invalid json: {line}"))?;
+         Ok(v)
+@@ -217,12 +241,18 @@ mod tests
+     fn read_timeout_errors()
+     {
+         // Pas de lignes -> timeout
+         let mut fake = Fake::new(&[]);
+-        let r = fake.read_json_line_timeout();
+-        assert!(r.is_err());
++        let r = fake.read_json_line_timeout();
++        let e = r.unwrap_err();
++        // Vérifie qu'on peut downcaster en TimeoutErr
++        assert!(e.downcast_ref::<TimeoutErr>().is_some());
+     }
+ }
+diff --git a/crates/cli/src/bin/devit-mcp.rs b/crates/cli/src/bin/devit-mcp.rs
+index d4e5f6a..0f1a2b3 100644
+--- a/crates/cli/src/bin/devit-mcp.rs
++++ b/crates/cli/src/bin/devit-mcp.rs
+@@ -1,6 +1,7 @@
+ //! CLI expérimentale MCP (stdio).
+ //! Construite uniquement avec: --features experimental
+ //! Usage:
+ //!   devit-mcp --cmd '<serveur MCP>' [--handshake-only]
+ //!   devit-mcp --cmd '<serveur MCP>' --echo "hello"
+ 
+ use clap::{ArgAction, Parser};
+ use devit_cli_mcp as mcp_mod;
+@@ -27,12 +28,25 @@ struct Cli
+     client_version: String,
+ }
+ 
+ fn main()
+ {
+-    if let Err(e) = real_main()
+-    {
+-        eprintln!("error: {e:?}");
+-        std::process::exit(2);
+-    }
++    match real_main() {
++        Ok(()) => {}
++        Err(e) => {
++            // Mapper les timeouts sur exit 124 (convention GNU timeout).
++            if e.downcast_ref::<mcp_mod::TimeoutErr>().is_some() {
++                eprintln!("error: timeout (no response within per-message deadline)");
++                std::process::exit(124);
++            }
++            // Message clair pour le reste
++            eprintln!("error: {e}");
++            std::process::exit(2);
++        }
++    }
+ }
+ 
+ fn real_main() -> Result<()>
+ {
+     let cli = Cli::parse();
+

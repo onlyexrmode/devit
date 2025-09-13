@@ -45,9 +45,16 @@ struct Cli {
 }
 
 fn main() {
-    if let Err(e) = real_main() {
-        eprintln!("error: {e:?}");
-        std::process::exit(2);
+    match real_main() {
+        Ok(()) => {}
+        Err(e) => {
+            if e.downcast_ref::<mcp_mod::TimeoutErr>().is_some() {
+                eprintln!("error: timeout (no response within per-message deadline)");
+                std::process::exit(124);
+            }
+            eprintln!("error: {e}");
+            std::process::exit(2);
+        }
     }
 }
 
@@ -102,4 +109,3 @@ fn timeout(override_secs: Option<u64>) -> Duration {
     }
     mcp_mod::timeout_from_env()
 }
-

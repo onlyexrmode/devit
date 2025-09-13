@@ -9,7 +9,7 @@ use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::env;
-use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
@@ -22,6 +22,16 @@ pub fn timeout_from_env() -> Duration {
         .unwrap_or(30);
     Duration::from_secs(secs)
 }
+
+/// Erreur sentinelle pour signaler un délai dépassé.
+#[derive(Debug)]
+pub struct TimeoutErr;
+impl std::fmt::Display for TimeoutErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "timeout waiting line")
+    }
+}
+impl std::error::Error for TimeoutErr {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Capabilities {
@@ -115,9 +125,10 @@ impl McpClient {
                 let _ = tx.send(r);
             });
             // scoped: wait for a line or timeout
-            let line = rx
-                .recv_timeout(timeout)
-                .map_err(|_| anyhow!("timeout waiting line"))??;
+            let line = match rx.recv_timeout(timeout) {
+                Ok(res) => res?,
+                Err(_e) => return Err(TimeoutErr.into()),
+            };
             let v: Value = serde_json::from_str(&line)
                 .with_context(|| format!("invalid json: {line}"))?;
             Ok(v)
@@ -169,9 +180,10 @@ mod tests {
                     };
                     let _ = tx.send(r);
                 });
-                let line = rx
-                    .recv_timeout(timeout)
-                    .map_err(|_| anyhow!("timeout waiting line"))??;
+                let line = match rx.recv_timeout(timeout) {
+                    Ok(res) => res?,
+                    Err(_e) => return Err(TimeoutErr.into()),
+                };
                 let v: Value = serde_json::from_str(&line)?;
                 Ok(v)
             })
@@ -200,9 +212,9 @@ mod tests {
     #[test]
     fn handshake_flow_happy_path() {
         let mut fake = Fake::new(&[
-            r#"{\"type\":\"pong\"}"#,
-            r#"{\"type\":\"version\",\"payload\":{\"server\":\"mock\"}}"#,
-            r#"{\"type\":\"capabilities\",\"payload\":{\"tools\":[\"echo\"]}}"#,
+            r#"{"type":"pong"}"#,
+            r#"{"type":"version","payload":{"server":"mock"}}"#,
+            r#"{"type":"capabilities","payload":{"tools":["echo"]}}"#,
         ]);
         fake.write_json(&json!({"type":"ping"})).unwrap();
         let pong = fake.read_json_line_timeout().unwrap();
@@ -221,6 +233,7 @@ mod tests {
     fn read_timeout_errors() {
         let mut fake = Fake::new(&[]);
         let r = fake.read_json_line_timeout();
-        assert!(r.is_err());
+        let e = r.unwrap_err();
+        assert!(e.downcast_ref::<TimeoutErr>().is_some());
     }
 }
