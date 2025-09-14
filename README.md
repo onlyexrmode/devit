@@ -173,3 +173,61 @@ Plugins (WASM/WASI)
 - Limitations MVP
   - Backend OpenAI‑like (URL configurable)
   - TUI non‑streaming pour la génération de diff (aperçu ponctuel)
+## MCP (expérimental)
+
+Binaire client : `devit-mcp`
+
+Binaire serveur : `devit-mcpd`
+
+Outils exposés (server):
+
+- `server.policy` — état effectif (approvals, limites, audit)
+- `server.health` — uptime + dépendances (devit, devit-plugin, wasmtime)
+- `server.stats` — compteurs d’appels par outil
+- `devit.tool_list` — proxy de `devit tool list`
+- `devit.tool_call` — proxy de `devit tool call -` (JSON stdin → JSON stdout)
+- `plugin.invoke` — proxy de `devit-plugin invoke --id <id>` (JSON stdin → JSON stdout)
+- `echo` — outil de test
+
+Flags utiles (client) :
+
+- `--policy`, `--health`, `--stats`, `--call <name> --json '<payload>'`
+
+Flags utiles (serveur) :
+
+- `--yes` (auto-approve), `--policy-dump`, `--no-audit`
+- `--max-calls-per-min`, `--max-json-kb`, `--cooldown-ms`
+- `--devit-bin`, `--devit-plugin-bin`, `--timeout-secs`
+
+Exemples :
+
+Handshake :
+
+```
+devit-mcp --cmd 'devit-mcpd --yes' --handshake-only
+```
+
+Politique côté serveur :
+
+```
+devit-mcp --cmd 'devit-mcpd --yes' --policy | jq
+```
+
+Santé et stats :
+
+```
+devit-mcp --cmd 'devit-mcpd --yes' --health | jq
+devit-mcp --cmd 'devit-mcpd --yes' --stats | jq
+```
+
+Appel de tool :
+
+```
+devit-mcp --cmd 'devit-mcpd --yes' --call devit.tool_list --json '{}'
+```
+
+Plugin WASI (si echo_sum.wasm installé) :
+
+```
+echo '{"id":"echo_sum","payload":{"a":2,"b":40}}' | devit-mcp --cmd 'devit-mcpd --yes' --call plugin.invoke --json @-
+```

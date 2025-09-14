@@ -1,5 +1,8 @@
-//! MCP server (stdio) minimal — expérimental.
-//! Protocol JSON line-based: handles ping/version/capabilities and a demo tool `echo`.
+//! Serveur MCP stdio (expérimental) exposant des outils DevIt.
+//! Exemples:
+//! devit-mcpd --yes --devit-bin devit
+//! devit-mcpd --policy-dump
+//! devit-mcpd --no-audit --max-calls-per-min 30 --cooldown-ms 500
 
 use anyhow::{anyhow, Context, Result};
 use base64::Engine;

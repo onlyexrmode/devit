@@ -1,8 +1,12 @@
 //! CLI expérimentale MCP (stdio).
 //! Construite uniquement avec: --features experimental
 //! Usage:
-//!   devit-mcp --cmd '<serveur MCP>' [--handshake-only]
-//!   devit-mcp --cmd '<serveur MCP>' --echo "hello"
+//! devit-mcp --cmd '<serveur MCP>' --handshake-only
+//! devit-mcp --cmd '<serveur MCP>' --echo "hello"
+//! devit-mcp --cmd '<serveur MCP>' --call devit.tool_list --json '{}'
+//! devit-mcp --cmd '<serveur MCP>' --policy
+//! devit-mcp --cmd '<serveur MCP>' --health
+//! devit-mcp --cmd '<serveur MCP>' --stats
 //!   devit-mcp --cmd '<serveur MCP>' --policy
 
 use clap::{ArgAction, Parser};

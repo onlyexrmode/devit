@@ -169,6 +169,37 @@ help-cli:
 	@echo "ci-cli         : check-cli + build-cli"
 	@echo "dist           : package tar.gz + sha256 (local)"
 
+# ===== MCP helpers =====
+.PHONY: build-exp run-mcpd mcp-policy mcp-health mcp-stats e2e-mcp
+build-exp:
+	@cargo build -p $(DEVIT_PKG) --features experimental --bins
+
+run-mcpd:
+	@target/debug/devit-mcpd --yes --devit-bin target/debug/devit
+
+mcp-policy:
+	@target/debug/devit-mcp --cmd 'target/debug/devit-mcpd --yes --devit-bin target/debug/devit' --policy | jq
+
+mcp-health:
+	@target/debug/devit-mcp --cmd 'target/debug/devit-mcpd --yes --devit-bin target/debug/devit' --health | jq
+
+mcp-stats:
+	@target/debug/devit-mcp --cmd 'target/debug/devit-mcpd --yes --devit-bin target/debug/devit' --stats | jq
+
+e2e-mcp:
+	@set -e; \
+	cargo build -p $(DEVIT_PKG) --features experimental --bins; \
+	SRV="target/debug/devit-mcpd --yes --devit-bin target/debug/devit"; \
+	( $$SRV & echo $$! > .devit/mcpd.pid ); \
+	sleep 0.5; \
+	target/debug/devit-mcp --cmd "$$SRV" --policy >/dev/null; \
+	target/debug/devit-mcp --cmd "$$SRV" --health >/dev/null || true; \
+	target/debug/devit-mcp --cmd "$$SRV" --stats >/dev/null || true; \
+	echo '{"tool":"echo","args":{"msg":"ok"}}' | target/debug/devit-mcp --cmd "$$SRV" --call devit.tool_call --json @- >/dev/null || true; \
+	kill $$(cat .devit/mcpd.pid) 2>/dev/null || true; \
+	rm -f .devit/mcpd.pid; \
+	echo "E2E MCP: OK"
+
 # ===== Plugins (WASM/WASI) helpers =====
 
 plugin-echo-sum:
