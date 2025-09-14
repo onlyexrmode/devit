@@ -400,12 +400,29 @@ fn real_main() -> Result<()> {
                                     Ok(out) => {
                                         let dur = start.elapsed().as_millis();
                                         audit_done(&audit, tool_key, true, dur, None);
-                                        state.bump_ok(tool_key);
-                                        writeln!(
-                                            stdout,
-                                            "{}",
-                                            json!({"type":"tool.result","payload": {"name": tool_key, "result": out}})
-                                        )?;
+                                        // on_failure handling for plugin.invoke
+                                        let is_fail = out
+                                            .get("ok")
+                                            .and_then(|v| v.as_bool())
+                                            .map(|b| !b)
+                                            .unwrap_or(false);
+                                        if policy == "on_failure" && is_fail && !cli.yes {
+                                            writeln!(
+                                                stdout,
+                                                "{}",
+                                                json!({
+                                                    "type": "tool.error",
+                                                    "payload": {"approval_required": true, "policy": policy, "phase": "post"}
+                                                })
+                                            )?;
+                                        } else {
+                                            state.bump_ok(tool_key);
+                                            writeln!(
+                                                stdout,
+                                                "{}",
+                                                json!({"type":"tool.result","payload": {"name": tool_key, "result": out}})
+                                            )?;
+                                        }
                                     }
                                     Err(e) => {
                                         let dur = start.elapsed().as_millis();
@@ -868,13 +885,36 @@ fn load_policies(path: Option<&PathBuf>) -> Result<Policies> {
     }
     #[derive(serde::Deserialize, Default)]
     struct Mcp {
+        profile: Option<String>,
         approvals: Option<HashMap<String, String>>,
     }
     let r: Root = toml::from_str(&s).context("parse TOML")?;
     let mut out = default_policies();
-    if let Some(map) = r.mcp.and_then(|m| m.approvals) {
-        for (k, v) in map.into_iter() {
-            out.0.insert(k, v.to_ascii_lowercase());
+    if let Some(mcp) = r.mcp {
+        // Apply profile presets first
+        if let Some(p) = mcp.profile.as_deref() {
+            match p {
+                "safe" => {
+                    out.0.insert("devit.tool_call".into(), "on_request".into());
+                    out.0.insert("plugin.invoke".into(), "on_request".into());
+                    // server.* already "never" by defaults
+                }
+                "std" => {
+                    out.0.insert("devit.tool_call".into(), "on_failure".into());
+                    out.0.insert("plugin.invoke".into(), "on_request".into());
+                }
+                "danger" => {
+                    out.0.insert("devit.tool_call".into(), "never".into());
+                    out.0.insert("plugin.invoke".into(), "on_failure".into());
+                }
+                _ => {}
+            }
+        }
+        // Then explicit overrides
+        if let Some(map) = mcp.approvals {
+            for (k, v) in map.into_iter() {
+                out.0.insert(k, v.to_ascii_lowercase());
+            }
         }
     }
     Ok(out)
@@ -1047,37 +1087,73 @@ fn audit_done(opts: &AuditOpts, tool: &str, ok: bool, dur_ms: u128, err: Option<
 pub fn policy_dump_json(config_path: Option<&std::path::Path>) -> serde_json::Value {
     use std::collections::BTreeMap;
 
-    // on réutilise la logique existante
-    let cfg = match config_path {
-        Some(p) => load_policies(Some(&p.to_path_buf())).unwrap_or_else(|_| default_policies()),
-        None => default_policies(),
-    };
+    // parse raw config to extract profile + approvals
+    #[derive(serde::Deserialize, Default)]
+    struct Root {
+        mcp: Option<Mcp>,
+    }
+    #[derive(serde::Deserialize, Default)]
+    struct Mcp {
+        profile: Option<String>,
+        approvals: Option<HashMap<String, String>>,
+    }
 
-    // defaults visibles par le superviseur
-    let mut tools: BTreeMap<String, String> = BTreeMap::from([
-        ("devit.tool_list".to_string(), "never".to_string()),
-        ("devit.tool_call".to_string(), "on_request".to_string()),
-        ("plugin.invoke".to_string(), "on_request".to_string()),
-        ("echo".to_string(), "never".to_string()),
-    ]);
+    let mut eff = default_policies();
+    let mut profile: Option<String> = None;
+    if let Some(p) = config_path {
+        if let Ok(s) = fs::read_to_string(p) {
+            if let Ok(root) = toml::from_str::<Root>(&s) {
+                if let Some(m) = root.mcp {
+                    if let Some(pr) = m.profile {
+                        profile = Some(pr.clone());
+                        match pr.as_str() {
+                            "safe" => {
+                                eff.0.insert("devit.tool_call".into(), "on_request".into());
+                                eff.0.insert("plugin.invoke".into(), "on_request".into());
+                            }
+                            "std" => {
+                                eff.0.insert("devit.tool_call".into(), "on_failure".into());
+                                eff.0.insert("plugin.invoke".into(), "on_request".into());
+                            }
+                            "danger" => {
+                                eff.0.insert("devit.tool_call".into(), "never".into());
+                                eff.0.insert("plugin.invoke".into(), "on_failure".into());
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(map) = m.approvals {
+                        for (k, v) in map.into_iter() {
+                            eff.0.insert(k, v.to_ascii_lowercase());
+                        }
+                    }
+                }
+            }
+        }
+    }
 
-    // merge avec la map interne
+    let mut tools: BTreeMap<String, String> = BTreeMap::new();
     for k in [
         "devit.tool_list",
         "devit.tool_call",
         "plugin.invoke",
+        "server.policy",
+        "server.context_head",
+        "server.health",
+        "server.stats",
+        "server.stats.reset",
         "echo",
     ] {
-        let eff = cfg
+        let v = eff
             .0
             .get(k)
             .cloned()
             .unwrap_or_else(|| default_policy_for(k));
-        tools.insert(k.to_string(), eff);
+        tools.insert(k.to_string(), v);
     }
 
-    // expose aussi un “wildcard” par défaut
     serde_json::json!({
+        "profile": profile.unwrap_or_else(|| "none".to_string()),
         "default": "on_request",
         "tools": tools
     })
@@ -1560,6 +1636,35 @@ mod ctx_tests {
         assert!(v["ok"].as_bool().unwrap_or(false));
         assert_eq!(v["items"].as_array().unwrap().len(), 1);
         assert_eq!(v["items"][0]["path"].as_str().unwrap(), "src/lib.rs");
+    }
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::*;
+    #[test]
+    fn policy_dump_includes_profile_and_merge() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("devit.toml");
+        std::fs::write(
+            &cfg,
+            r#"
+[mcp]
+profile = "std"
+[mcp.approvals]
+"server.stats.reset" = "never"
+"#,
+        )
+        .unwrap();
+        let v = policy_dump_json(Some(&cfg));
+        assert_eq!(v["profile"].as_str().unwrap(), "std");
+        // std preset => devit.tool_call on_failure
+        assert_eq!(
+            v["tools"]["devit.tool_call"].as_str().unwrap(),
+            "on_failure"
+        );
+        // explicit override applied
+        assert_eq!(v["tools"]["server.stats.reset"].as_str().unwrap(), "never");
     }
 }
 fn run_devit_list(bin: &PathBuf, timeout: Duration) -> Result<Value> {

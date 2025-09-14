@@ -1,30 +1,4 @@
 ========================
-Directives Codex — Ticket B : Validation JSON I/O (devit.tool_call, plugin.invoke)
-
-Objectif: refuser tôt les entrées mal formées avec messages clairs.
-
-Schémas minimaux:
-
-devit.tool_call: requis tool: string, args: object
-
-plugin.invoke: requis id: string, payload: object
-
-Emplacement:
-
-mcp_server.rs, juste avant exécution (après approvals/ratelimit/dry-run)
-
-Erreur normalisée:
-tool.error { schema_error:true, path:"payload.tool" | "payload.args" | "payload.id" | "payload.payload", reason:"missing|type_mismatch" }
-
-Tests:
-
-manquant → missing
-
-mauvais type → type_mismatch
-
-ok → passe à l’exécution réelle
-
-========================
 Directives Codex — Ticket C : Profils d’approvals (safe|std|danger)
 
 Objectif: activer un preset en 1 ligne dans .devit/devit.toml, surchargeable par outils.
