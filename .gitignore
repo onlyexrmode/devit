@@ -7,6 +7,7 @@ bench/.venv/
 bench/predictions.jsonl
 bench/instances_auto_*.txt
 .devit/
+!.devit/plugins/.gitkeep
 bench/bench_logs/
 bench/patch_diff_vide.patch
 bench/patch-devit-bin.diff

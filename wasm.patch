@@ -1,0 +1,492 @@
+diff --git a/crates/cli/Cargo.toml b/crates/cli/Cargo.toml
+index 2222222..5555555 100644
+--- a/crates/cli/Cargo.toml
++++ b/crates/cli/Cargo.toml
+@@ -1,23 +1,37 @@
+ [package]
+ name = "devit-cli"
+ version = "0.2.0"
+ edition = "2021"
+ 
+ [features]
+ # Aucun impact par défaut. Active les bins/commandes MCP.
+ default = []
+ experimental = []
+ 
+ [[bin]]
+ name = "devit"
+ path = "src/main.rs"
+ 
+ # Binaire expérimental MCP (n'est compilé que si feature activée)
+ [[bin]]
+ name = "devit-mcp"
+ path = "src/bin/devit-mcp.rs"
+ required-features = ["experimental"]
+ 
++# Binaire expérimental Plugins WASM/WASI
++[[bin]]
++name = "devit-plugin"
++path = "src/bin/devit-plugin.rs"
++required-features = ["experimental"]
++
+ [dependencies]
+ anyhow = "1"
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"
++toml = "0.8"
++
+diff --git a/crates/cli/src/plugins.rs b/crates/cli/src/plugins.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/cli/src/plugins.rs
+@@ -0,0 +1,318 @@
++//! Loader minimal pour plugins WASI (JSON stdin → JSON stdout) via `wasmtime` binaire.
++//! - Registry: .devit/plugins/<id>/devit-plugin.toml (override: DEVIT_PLUGINS_DIR)
++//! - Manifest TOML: id, name, wasm, version?, allowed_dirs?[], env?[]
++//! - Sandbox: pas de `--dir` par défaut (zéro accès FS). Ajouts contrôlés via allowed_dirs.
++//! - Timeout: DEVIT_TIMEOUT_SECS (fallback 30s). Timeout → exit 124.
++use anyhow::{anyhow, Context, Result};
++use serde::{Deserialize, Serialize};
++use serde_json::Value;
++use std::env;
++use std::ffi::OsStr;
++use std::fs;
++use std::io::{Read, Write};
++use std::path::{Path, PathBuf};
++use std::process::{Command, Stdio};
++use std::sync::mpsc;
++use std::thread;
++use std::time::Duration;
++
++#[derive(Debug)]
++pub struct TimeoutErr;
++impl std::fmt::Display for TimeoutErr {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        write!(f, "timeout waiting plugin output")
++    }
++}
++impl std::error::Error for TimeoutErr {}
++
++#[derive(Debug, Clone, Deserialize, Serialize)]
++pub struct PluginManifest {
++    pub id: String,
++    #[serde(default)]
++    pub name: Option<String>,
++    /// Chemin vers le .wasm (relatif au manifest).
++    pub wasm: String,
++    #[serde(default)]
++    pub version: Option<String>,
++    /// Pré-ouvertures de répertoires (`wasmtime run --dir=<path>`).
++    #[serde(default)]
++    pub allowed_dirs: Vec<String>,
++    /// Variables d'environnement à propager (`--env key=value`).
++    #[serde(default)]
++    pub env: Vec<String>,
++}
++
++#[derive(Debug, Clone, Serialize)]
++pub struct PluginInfo {
++    pub id: String,
++    pub name: String,
++    pub version: Option<String>,
++    pub manifest_path: String,
++}
++
++fn timeout_from_env() -> Duration {
++    let secs = env::var("DEVIT_TIMEOUT_SECS")
++        .ok()
++        .and_then(|s| s.parse::<u64>().ok())
++        .unwrap_or(30);
++    Duration::from_secs(secs)
++}
++
++fn default_registry_dir() -> PathBuf {
++    if let Ok(p) = env::var("DEVIT_PLUGINS_DIR") {
++        return PathBuf::from(p);
++    }
++    PathBuf::from(".devit/plugins")
++}
++
++pub fn load_manifest(path: &Path) -> Result<PluginManifest> {
++    let s = fs::read_to_string(path)
++        .with_context(|| format!("read manifest {}", path.display()))?;
++    let m: PluginManifest = toml::from_str(&s)
++        .with_context(|| format!("parse TOML {}", path.display()))?;
++    Ok(m)
++}
++
++pub fn discover_plugins(root: Option<&Path>) -> Result<Vec<PluginInfo>> {
++    let root = root.map(PathBuf::from).unwrap_or_else(default_registry_dir);
++    if !root.exists() {
++        return Ok(vec![]);
++    }
++    let mut out = Vec::new();
++    for entry in fs::read_dir(&root)? {
++        let entry = entry?;
++        if !entry.file_type()?.is_dir() {
++            continue;
++        }
++        let manifest = entry.path().join("devit-plugin.toml");
++        if !manifest.exists() {
++            continue;
++        }
++        let m = match load_manifest(&manifest) {
++            Ok(x) => x,
++            Err(e) => {
++                eprintln!("warn: invalid plugin manifest {}: {e}", manifest.display());
++                continue;
++            }
++        };
++        out.push(PluginInfo {
++            id: m.id.clone(),
++            name: m.name.clone().unwrap_or_else(|| m.id.clone()),
++            version: m.version.clone(),
++            manifest_path: manifest.display().to_string(),
++        });
++    }
++    out.sort_by(|a, b| a.id.cmp(&b.id));
++    Ok(out)
++}
++
++fn ensure_bin_exists<S: AsRef<OsStr>>(bin: S) -> Result<()> {
++    let which = if cfg!(target_os = "windows") { "where" } else { "which" };
++    let status = Command::new(which).arg(&bin).stdout(Stdio::null()).stderr(Stdio::null()).status();
++    match status {
++        Ok(s) if s.success() => Ok(()),
++        _ => Err(anyhow!("required binary {:?} not found in PATH", bin.as_ref())),
++    }
++}
++
++/// Invoque un plugin par manifeste, lit JSON depuis `stdin_json` et renvoie JSON stdout.
++pub fn invoke_manifest(manifest_path: &Path, stdin_json: &str, per_msg_timeout: Option<Duration>) -> Result<Value> {
++    ensure_bin_exists("wasmtime")?;
++
++    let manifest = load_manifest(manifest_path)?;
++    // Résoudre le chemin du .wasm relativement au manifest
++    let wasm_path = manifest_path.parent().unwrap_or_else(|| Path::new(".")).join(&manifest.wasm);
++    if !wasm_path.exists() {
++        return Err(anyhow!("wasm file not found: {}", wasm_path.display()));
++    }
++    let timeout = per_msg_timeout.unwrap_or_else(timeout_from_env);
++
++    // Préparer la commande wasmtime
++    let mut cmd = Command::new("wasmtime");
++    cmd.arg("run");
++    // Ajout de pré-ouvertures explicites (sandbox FS fermée sinon).
++    for d in &manifest.allowed_dirs {
++        cmd.arg(format!("--dir={d}"));
++    }
++    // Variables d'env limitées
++    for kv in &manifest.env {
++        // Passage direct, s'attend à "KEY=VALUE"
++        cmd.arg(format!("--env={kv}"));
++    }
++    cmd.arg(wasm_path.as_os_str());
++    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
++
++    let mut child = cmd.spawn().with_context(|| "spawn wasmtime failed")?;
++    // Feed JSON to stdin
++    {
++        let mut sin = child.stdin.take().ok_or_else(|| anyhow!("child stdin missing"))?;
++        sin.write_all(stdin_json.as_bytes())?;
++        sin.flush()?;
++        drop(sin);
++    }
++    // Read stdout with timeout
++    let mut sout = child.stdout.take().ok_or_else(|| anyhow!("child stdout missing"))?;
++    let (tx, rx) = mpsc::sync_channel::<Result<String>>(1);
++    thread::spawn(move || {
++        let mut buf = String::new();
++        let res = sout.read_to_string(&mut buf).map_err(|e| anyhow!(e)).map(|_| buf);
++        let _ = tx.send(res);
++    });
++    match rx.recv_timeout(timeout) {
++        Ok(res) => {
++            let out = res?;
++            // Option: garder première ligne JSON si plugin log avant.
++            let first_json = out
++                .lines()
++                .find(|l| l.trim_start().starts_with('{') || l.trim_start().starts_with('['))
++                .ok_or_else(|| anyhow!("no JSON found on plugin stdout"))?;
++            let v: Value = serde_json::from_str(first_json).with_context(|| format!("invalid JSON: {first_json}"))?;
++            Ok(v)
++        }
++        Err(_timeout) => {
++            // Tue le processus plugin si toujours en cours
++            let _ = child.kill();
++            Err(TimeoutErr.into())
++        }
++    }
++}
++
++/// Résout un plugin par ID dans le registry (DEVIT_PLUGINS_DIR) et l'invoque.
++pub fn invoke_by_id(id: &str, stdin_json: &str, per_msg_timeout: Option<Duration>, root: Option<&Path>) -> Result<Value> {
++    let root = root.map(PathBuf::from).unwrap_or_else(default_registry_dir);
++    let manifest = root.join(id).join("devit-plugin.toml");
++    if !manifest.exists() {
++        return Err(anyhow!("plugin id {:?} not found at {}", id, manifest.display()));
++    }
++    invoke_manifest(&manifest, stdin_json, per_msg_timeout)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::io::Write as _;
++    use tempfile::tempdir;
++
++    #[test]
++    fn parse_manifest_ok() {
++        let dir = tempdir().unwrap();
++        let path = dir.path().join("devit-plugin.toml");
++        let mut f = fs::File::create(&path).unwrap();
++        writeln!(
++            f,
++            r#"
++id = "echo_sum"
++name = "Echo Sum"
++wasm = "echo_sum.wasm"
++version = "0.1.0"
++allowed_dirs = []
++env = []
++"#
++        )
++        .unwrap();
++        let m = load_manifest(&path).unwrap();
++        assert_eq!(m.id, "echo_sum");
++        assert_eq!(m.wasm, "echo_sum.wasm");
++    }
++
++    #[test]
++    fn discover_empty_ok() {
++        let dir = tempdir().unwrap();
++        let res = discover_plugins(Some(dir.path())).unwrap();
++        assert!(res.is_empty());
++    }
++
++    #[test]
++    fn discover_lists_manifest_dirs() {
++        let dir = tempdir().unwrap();
++        let one = dir.path().join("one");
++        let two = dir.path().join("two");
++        fs::create_dir_all(&one).unwrap();
++        fs::create_dir_all(&two).unwrap();
++        fs::write(
++            one.join("devit-plugin.toml"),
++            r#"id="a"\nwasm="a.wasm"\n"#,
++        )
++        .unwrap();
++        fs::write(
++            two.join("devit-plugin.toml"),
++            r#"id="b"\nwasm="b.wasm"\n"#,
++        )
++        .unwrap();
++        let mut list = discover_plugins(Some(dir.path())).unwrap();
++        list.sort_by(|a, b| a.id.cmp(&b.id));
++        assert_eq!(list.len(), 2);
++        assert_eq!(list[0].id, "a");
++        assert_eq!(list[1].id, "b");
++    }
++}
+diff --git a/crates/cli/src/bin/devit-plugin.rs b/crates/cli/src/bin/devit-plugin.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/cli/src/bin/devit-plugin.rs
+@@ -0,0 +1,170 @@
++//! CLI expérimental: gestion/invocation de plugins WASI (JSON I/O).
++//! Construit uniquement avec: --features experimental
++//! Usage:
++//!   devit-plugin list [--dir <registry>]
++//!   devit-plugin invoke --id <id> [--dir <registry>] < input.json > output.json
++//!   devit-plugin invoke --manifest <file> < input.json > output.json
++
++use anyhow::{anyhow, Context, Result};
++use clap::{Args, Parser, Subcommand};
++use serde_json::Value;
++use std::fs;
++use std::io::{self, Read};
++use std::path::PathBuf;
++use std::time::Duration;
++
++// Import du module loader
++#[path = "../plugins.rs"]
++mod plugins;
++
++#[derive(Parser, Debug)]
++#[command(name = "devit-plugin")]
++#[command(about = "Plugins WASM/WASI (expérimental) — JSON stdin→stdout")]
++struct Cli {
++    #[command(subcommand)]
++    cmd: Commands,
++}
++
++#[derive(Subcommand, Debug)]
++enum Commands {
++    /// Liste les plugins présents dans le registry (JSON)
++    List(ListArgs),
++    /// Invoque un plugin (lit JSON sur stdin, écrit JSON sur stdout)
++    Invoke(InvokeArgs),
++}
++
++#[derive(Args, Debug)]
++struct ListArgs {
++    /// Racine du registry (défaut: .devit/plugins ou $DEVIT_PLUGINS_DIR)
++    #[arg(long)]
++    dir: Option<PathBuf>,
++}
++
++#[derive(Args, Debug)]
++struct InvokeArgs {
++    /// Identifiant du plugin (dossier .devit/plugins/<id>)
++    #[arg(long)]
++    id: Option<String>,
++    /// Chemin explicite d'un manifeste (bypass l'ID)
++    #[arg(long)]
++    manifest: Option<PathBuf>,
++    /// Timeout en secondes (fallback DEVIT_TIMEOUT_SECS, sinon 30)
++    #[arg(long)]
++    timeout_secs: Option<u64>,
++    /// Racine du registry (si --id)
++    #[arg(long)]
++    dir: Option<PathBuf>,
++}
++
++fn main() {
++    match real_main() {
++        Ok(()) => {}
++        Err(e) => {
++            // Mapper timeout → 124 (convention GNU timeout)
++            if e.downcast_ref::<plugins::TimeoutErr>().is_some() {
++                eprintln!("error: plugin timeout");
++                std::process::exit(124);
++            }
++            eprintln!("error: {e}");
++            std::process::exit(2);
++        }
++    }
++}
++
++fn real_main() -> Result<()> {
++    let cli = Cli::parse();
++    match cli.cmd {
++        Commands::List(a) => do_list(a),
++        Commands::Invoke(a) => do_invoke(a),
++    }
++}
++
++fn do_list(a: ListArgs) -> Result<()> {
++    let list = plugins::discover_plugins(a.dir.as_deref().map(|p| p.as_path()))?;
++    println!("{}", serde_json::to_string_pretty(&list)?);
++    Ok(())
++}
++
++fn do_invoke(a: InvokeArgs) -> Result<()> {
++    let timeout = a
++        .timeout_secs
++        .map(Duration::from_secs);
++    let mut buf = String::new();
++    io::stdin().read_to_string(&mut buf)?;
++    // Autoriser aussi un JSON "compact" sur une seule ligne
++    if buf.trim().is_empty() {
++        return Err(anyhow!("stdin is empty; expected JSON request"));
++    }
++    let _req_json: Value = serde_json::from_str(buf.trim())
++        .context("stdin must be valid JSON")?;
++
++    let out = if let Some(manifest) = a.manifest {
++        plugins::invoke_manifest(&manifest, buf.trim(), timeout)?
++    } else if let Some(id) = a.id {
++        plugins::invoke_by_id(&id, buf.trim(), timeout, a.dir.as_deref().map(|p| p.as_path()))?
++    } else {
++        return Err(anyhow!("provide either --id <id> or --manifest <file>"));
++    };
++    println!("{}", serde_json::to_string(&out)?);
++    Ok(())
++}
+diff --git a/examples/plugins/echo_sum/Cargo.toml b/examples/plugins/echo_sum/Cargo.toml
+new file mode 100644
+--- /dev/null
++++ b/examples/plugins/echo_sum/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "devit-plugin-echo-sum"
++version = "0.1.0"
++edition = "2021"
++
++# Plugin compilé en binaire WASI ('wasm32-wasi')
++
++[dependencies]
++serde = { version = "1", features = ["derive"] }
++serde_json = "1"
++
++[[bin]]
++name = "echo_sum"
++path = "src/main.rs"
+diff --git a/examples/plugins/echo_sum/src/main.rs b/examples/plugins/echo_sum/src/main.rs
+new file mode 100644
+--- /dev/null
++++ b/examples/plugins/echo_sum/src/main.rs
+@@ -0,0 +1,66 @@
++//! Exemple de plugin WASI: lit {"a":number,"b":number} et renvoie {"sum":a+b,"echo":...}
++//! Build:
++//!   rustup target add wasm32-wasi
++//!   cargo build --target wasm32-wasi --release
++//! Copie:
++//!   mkdir -p .devit/plugins/echo_sum
++//!   cp target/wasm32-wasi/release/echo_sum.wasm .devit/plugins/echo_sum/echo_sum.wasm
++//!   cat > .devit/plugins/echo_sum/devit-plugin.toml <<'TOML'
++//!   id = "echo_sum"
++//!   name = "Echo Sum"
++//!   wasm = "echo_sum.wasm"
++//!   version = "0.1.0"
++//!   allowed_dirs = []
++//!   env = []
++//!   TOML
++
++use serde::{Deserialize, Serialize};
++use std::io::{Read, Write};
++
++#[derive(Deserialize)]
++struct Req {
++    a: f64,
++    b: f64,
++    #[allow(dead_code)]
++    #[serde(default)]
++    text: Option<String>,
++}
++
++#[derive(Serialize)]
++struct Resp<'a> {
++    sum: f64,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    echo: Option<&'a str>,
++}
++
++fn main() {
++    // Lecture complète de stdin
++    let mut buf = String::new();
++    std::io::stdin().read_to_string(&mut buf).unwrap();
++    let trimmed = buf.trim();
++    let req: Req = match serde_json::from_str(trimmed) {
++        Ok(r) => r,
++        Err(e) => {
++            eprintln!("invalid json: {e}");
++            std::process::exit(2);
++        }
++    };
++    let resp = Resp {
++        sum: req.a + req.b,
++        echo: None,
++    };
++    let out = serde_json::to_string(&resp).unwrap();
++    let mut stdout = std::io::stdout();
++    stdout.write_all(out.as_bytes()).unwrap();
++    stdout.flush().unwrap();
++}
+diff --git a/.devit/plugins/.gitkeep b/.devit/plugins/.gitkeep
+new file mode 100644
+--- /dev/null
++++ b/.devit/plugins/.gitkeep
+@@ -0,0 +1 @@
++# registry local des plugins (manifests + .wasm)
+

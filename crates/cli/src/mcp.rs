@@ -172,13 +172,21 @@ mod tests {
             let reader = &mut self.out;
             thread::scope(|s| {
                 s.spawn(|| {
-                    let mut line = String::new();
-                    let r: Result<String> = match reader.read_line(&mut line) {
-                        Ok(0) => Err(anyhow!("eof from server")),
-                        Ok(_) => Ok(line),
-                        Err(e) => Err(anyhow!(e)),
-                    };
-                    let _ = tx.send(r);
+                    // Simule un blocage si le buffer est vide pour forcer un timeout
+                    let is_empty = reader.get_ref().get_ref().is_empty();
+                    if is_empty {
+                        // dormir plus longtemps que le timeout pour garantir le dépassement
+                        std::thread::sleep(timeout + std::time::Duration::from_millis(50));
+                        let _ = tx.send(Err(anyhow!("no data")));
+                    } else {
+                        let mut line = String::new();
+                        let r: Result<String> = match reader.read_line(&mut line) {
+                            Ok(0) => Err(anyhow!("eof from server")),
+                            Ok(_) => Ok(line),
+                            Err(e) => Err(anyhow!(e)),
+                        };
+                        let _ = tx.send(r);
+                    }
                 });
                 let line = match rx.recv_timeout(timeout) {
                     Ok(res) => res?,
