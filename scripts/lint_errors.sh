@@ -18,3 +18,12 @@ echo "$out" | rg '"approval_required":\s*true' >/dev/null || true
 # rate-limit cooldown
 out=$(target/debug/devit-mcp --cmd "$SRV --cooldown-ms 1000" --call devit.tool_list --json '{}' >/dev/null; target/debug/devit-mcp --cmd "$SRV --cooldown-ms 1000" --call devit.tool_list --json '{}' || true)
 echo "$out" | rg '"rate_limited":\s*true' >/dev/null
+
+# watchdog max-runtime-secs
+# Feed periodic pings so the server loop iterates and hits the deadline
+set +e
+( for i in $(seq 1 20); do echo '{"type":"ping"}'; sleep 0.1; done ) | target/debug/devit-mcpd --yes --max-runtime-secs 1 >/dev/null 2>/tmp/mcpd_watchdog_stderr.txt
+code=$?
+set -e
+test "$code" -eq 2
+rg -q 'max runtime exceeded' /tmp/mcpd_watchdog_stderr.txt

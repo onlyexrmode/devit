@@ -198,6 +198,7 @@ Flags utiles (serveur) :
 - `--yes` (auto-approve), `--policy-dump`, `--no-audit`
 - `--max-calls-per-min`, `--max-json-kb`, `--cooldown-ms`
 - `--devit-bin`, `--devit-plugin-bin`, `--timeout-secs`
+- `--max-runtime-secs` (watchdog global: arrêt propre au bout de N secondes)
 
 Exemples :
 
@@ -218,6 +219,13 @@ Santé et stats :
 ```
 devit-mcp --cmd 'devit-mcpd --yes' --health | jq
 devit-mcp --cmd 'devit-mcpd --yes' --stats | jq
+
+Watchdog global (arrêt après N secondes) :
+
+```
+# Le serveur s'arrête proprement après 1s (exit 2), message clair sur stderr
+devit-mcp --cmd 'devit-mcpd --yes --max-runtime-secs 1' --policy || echo "exit=$?"
+```
 ```
 
 Appel de tool :
