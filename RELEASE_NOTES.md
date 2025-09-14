@@ -1,4 +1,14 @@
 # RELEASE_NOTES.md
+# RELEASE_NOTES.md
+## v0.2-rc.2
+- MCP server.* tools: policy, health, stats, context_head
+- Audit HMAC signé (.devit/journal.jsonl)
+- Quotas/rate-limit: max-calls-per-min, cooldown-ms, max-json-kb
+- Dry-run global: server.* autorisés uniquement, erreurs normalisées
+- Context v1: index.json et `server.context_head`
+- Flags kebab-case partout (`--timeout-secs`, etc.)
+- Version embarquée: SemVer + git describe/sha exposée par devit-mcpd
+
 ## v0.2-rc — Confiance & interop (pre-release)
 - Tools JSON I/O: `devit tool list` et `devit tool call -` (stdin JSON → stdout JSON)
 - Sandboxed `shell_exec`: safe‑list + best‑effort `net=off`, sortie capturée en JSON

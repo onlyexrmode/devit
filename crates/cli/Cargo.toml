@@ -3,8 +3,9 @@
 # -----------------------------
 [package]
 name = "devit-cli"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 edition = "2021"
+build = "build.rs"
 
 [features]
 # Aucun impact par défaut. Active les bins/commandes MCP.

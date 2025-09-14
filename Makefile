@@ -4,7 +4,7 @@ SHELL := bash
 
 # Package/binary names for CLI (override via env if needed)
 # Keep binary name `devit`; package is the CLI crate name.
-TAG ?= v0.2.0-rc.1
+TAG ?= v0.2.0-rc.2
 DEVIT_PKG ?= devit-cli
 DEVIT_BIN ?= devit
 # Ensure cargo gets a binary NAME, not a path possibly set in env
@@ -12,7 +12,8 @@ DEVIT_BIN_NAME := $(notdir $(DEVIT_BIN))
 PLUGINS_DIR ?= .devit/plugins
 
 .PHONY: fmt fmt-check fmt-fix clippy lint test test-cli build build-release smoke ci check verify help \
-        build-cli run-cli release-cli check-cli ci-cli help-cli plugin-echo-sum plugin-echo-sum-run
+        build-cli run-cli release-cli check-cli ci-cli help-cli plugin-echo-sum plugin-echo-sum-run \
+        lint-flags
 
 help:
 	@echo "Targets: fmt | fmt-check | fmt-fix | clippy | lint | test | test-cli | build | build-release | smoke | check | verify | ci"
@@ -114,6 +115,11 @@ check: fmt-check clippy
 verify: check build test
 
 ci: verify
+
+# Lint flags (kebab-case only + expected flags present)
+lint-flags:
+	@rg --hidden --glob '!target' -- '--[a-z]+_[a-z]+' || echo 'OK: aucun flag snake_case'
+	@rg --hidden --glob '!target' -- '--timeout-secs|--policy-dump|--no-audit|--max-calls-per-min|--max-json-kb|--cooldown-ms|--context-head|--head-limit|--head-ext' >/dev/null || (echo 'WARN: flags attendus manquants'; exit 1)
 
 .PHONY: release-draft release-publish
 release-draft:

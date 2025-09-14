@@ -146,3 +146,21 @@ jobs:
           target/debug/devit-mcp --cmd "$SRV" --call server.health --json '{}' >/dev/null
           target/debug/devit-mcp --cmd "$SRV" --call server.stats --json '{}' >/dev/null
           kill $(cat mcpd.pid) || true
+
+  lint_meta:
+    name: Lint meta (flags + errors)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ripgrep
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Lint flags
+        run: make lint-flags
+      - name: Lint JSON errors shape
+        run: scripts/lint_errors.sh

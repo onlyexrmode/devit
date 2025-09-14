@@ -3,6 +3,7 @@
 //! devit-mcpd --yes --devit-bin devit
 //! devit-mcpd --policy-dump
 //! devit-mcpd --no-audit --max-calls-per-min 30 --cooldown-ms 500
+//! devit-mcpd --max-json-kb 256
 
 use anyhow::{anyhow, Context, Result};
 use base64::Engine;
@@ -56,6 +57,16 @@ struct Cli {
     /// Mode dry-run: n'autorise que server.*; refuse toute exécution
     #[arg(long, action = clap::ArgAction::SetTrue)]
     dry_run: bool,
+
+    /// Limite: appels par minute
+    #[arg(long = "max-calls-per-min", default_value_t = 60)]
+    max_calls_per_min: u32,
+    /// Limite: taille JSON max (kB)
+    #[arg(long = "max-json-kb", default_value_t = 256)]
+    max_json_kb: usize,
+    /// Limite: cooldown entre appels (ms)
+    #[arg(long = "cooldown-ms", default_value_t = 250)]
+    cooldown_ms: u64,
 }
 
 fn main() {
@@ -67,6 +78,10 @@ fn main() {
 
 fn real_main() -> Result<()> {
     let cli = Cli::parse();
+    // Enrich server version with git metadata provided at build time
+    let git_desc = option_env!("DEVIT_GIT_DESCRIBE").unwrap_or("unknown");
+    let git_sha = option_env!("DEVIT_GIT_SHA").unwrap_or("unknown");
+    let server_version = format!("{} ({} {})", cli.server_version, git_desc, git_sha);
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     let mut lines = stdin.lock().lines();
@@ -88,9 +103,9 @@ fn real_main() -> Result<()> {
     }
 
     let mut rl = RateLimiter::new(Limits {
-        max_calls_per_min: 60,
-        max_json_kb: 256,
-        cooldown: Duration::from_millis(250),
+        max_calls_per_min: cli.max_calls_per_min,
+        max_json_kb: cli.max_json_kb,
+        cooldown: Duration::from_millis(cli.cooldown_ms),
     });
     while let Some(line) = lines.next() {
         let line = line?;
@@ -114,7 +129,7 @@ fn real_main() -> Result<()> {
                     json!({
                         "type":"version",
                         "payload":{
-                            "server": cli.server_version,
+                            "server": server_version,
                             "server_name": "devit-mcpd"
                         }
                     })
@@ -272,7 +287,7 @@ fn real_main() -> Result<()> {
                             &policies,
                             &rl.limits,
                             &state,
-                            &cli.server_version,
+                            &server_version,
                             cli.devit_bin.as_deref(),
                         );
                         let dur = start.elapsed().as_millis();
@@ -369,7 +384,7 @@ fn real_main() -> Result<()> {
                             &audit,
                             &policies,
                             &rl.limits,
-                            &cli.server_version,
+                            &server_version,
                         );
                         let dur = start.elapsed().as_millis();
                         audit_done(&audit, tool_key, true, dur, None);
@@ -403,6 +418,40 @@ fn real_main() -> Result<()> {
                             .devit_bin
                             .clone()
                             .unwrap_or_else(|| PathBuf::from("devit"));
+                        // rate-limit for devit.tool_list
+                        let tool_key = "devit.tool_list";
+                        let now = Instant::now();
+                        if let Err(e) = rl.allow(tool_key, now) {
+                            audit_pre(&audit, tool_key, "rate-limit");
+                            match e {
+                                RateLimitErr::TooManyCalls { limit } => {
+                                    writeln!(
+                                        stdout,
+                                        "{}",
+                                        json!({"type":"tool.error","payload":{
+                                            "name": tool_key,
+                                            "rate_limited": true,
+                                            "reason": "too_many_calls",
+                                            "limit_per_min": limit
+                                        }})
+                                    )?;
+                                    continue;
+                                }
+                                RateLimitErr::Cooldown { ms_left } => {
+                                    writeln!(
+                                        stdout,
+                                        "{}",
+                                        json!({"type":"tool.error","payload":{
+                                            "name": tool_key,
+                                            "rate_limited": true,
+                                            "reason": "cooldown",
+                                            "cooldown_ms": ms_left
+                                        }})
+                                    )?;
+                                    continue;
+                                }
+                            }
+                        }
                         let start = Instant::now();
                         match run_devit_list(&bin, timeout) {
                             Ok(out) => {
