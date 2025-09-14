@@ -5,11 +5,17 @@ use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{collections::HashMap, fs};
+use chrono::Utc;
+use base64::Engine;
+use rand::{rngs::OsRng, RngCore};
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Parser, Debug)]
 #[command(name = "devit-mcpd")]
@@ -30,6 +36,18 @@ struct Cli {
     /// Config path for approval policies (default: .devit/devit.toml)
     #[arg(long = "config")]
     config_path: Option<PathBuf>,
+    /// Affiche la politique effective (JSON) puis quitte
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    policy_dump: bool,
+    /// Désactive l'audit JSONL signé
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    no_audit: bool,
+    /// Chemin du journal JSONL
+    #[arg(long, default_value = ".devit/journal.jsonl")]
+    audit_path: PathBuf,
+    /// Chemin de la clé HMAC
+    #[arg(long, default_value = ".devit/hmac.key")]
+    hmac_key: PathBuf,
 }
 
 fn main() {
@@ -46,6 +64,19 @@ fn real_main() -> Result<()> {
     let mut lines = stdin.lock().lines();
     let timeout = timeout_from_cli_env(cli.timeout_secs);
     let policies = load_policies(cli.config_path.as_ref()).unwrap_or_default();
+    let audit = AuditOpts {
+        audit_enabled: !cli.no_audit,
+        audit_path: cli.audit_path.clone(),
+        hmac_key_path: cli.hmac_key.clone(),
+        auto_yes: cli.yes,
+    };
+
+    // --policy-dump: print effective approvals JSON and exit
+    if cli.policy_dump {
+        let v = policy_dump_json(cli.config_path.as_deref().map(|p| p as &std::path::Path));
+        println!("{}", serde_json::to_string_pretty(&v)?);
+        return Ok(());
+    }
 
     while let Some(line) = lines.next() {
         let line = line?;
@@ -102,6 +133,7 @@ fn real_main() -> Result<()> {
                     .unwrap_or_else(|| default_policy_for(name));
                 // on_request/untrusted: require approval before running
                 if (policy == "on_request" || policy == "untrusted") && !cli.yes {
+                    audit_pre(&audit, name, "pre-deny");
                     writeln!(
                         stdout,
                         "{}",
@@ -135,8 +167,11 @@ fn real_main() -> Result<()> {
                             .devit_bin
                             .clone()
                             .unwrap_or_else(|| PathBuf::from("devit"));
+                        let start = Instant::now();
                         match run_devit_list(&bin, timeout) {
                             Ok(out) => {
+                                let dur = start.elapsed().as_millis();
+                                audit_done(&audit, name, true, dur, None);
                                 writeln!(
                                     stdout,
                                     "{}",
@@ -147,6 +182,8 @@ fn real_main() -> Result<()> {
                                 )?;
                             }
                             Err(e) => {
+                                let dur = start.elapsed().as_millis();
+                                audit_done(&audit, name, false, dur, Some(&e.to_string()));
                                 if policy == "on_failure" && !cli.yes {
                                     writeln!(
                                         stdout,
@@ -175,6 +212,7 @@ fn real_main() -> Result<()> {
                             .clone()
                             .unwrap_or_else(|| PathBuf::from("devit"));
                         let args_json = payload.get("args").cloned().unwrap_or(json!({}));
+                        let start = Instant::now();
                         match run_devit_call(&bin, &args_json, timeout) {
                             Ok(out) => {
                                 // on_failure: if DevIt reports ok=false, require approval (post)
@@ -183,6 +221,8 @@ fn real_main() -> Result<()> {
                                     .and_then(|v| v.as_bool())
                                     .map(|b| !b)
                                     .unwrap_or(false);
+                                let dur = start.elapsed().as_millis();
+                                audit_done(&audit, name, !is_fail, dur, None);
                                 if policy == "on_failure" && is_fail && !cli.yes {
                                     writeln!(
                                         stdout,
@@ -204,6 +244,8 @@ fn real_main() -> Result<()> {
                                 }
                             }
                             Err(e) => {
+                                let dur = start.elapsed().as_millis();
+                                audit_done(&audit, name, false, dur, Some(&e.to_string()));
                                 if policy == "on_failure" && !cli.yes {
                                     writeln!(
                                         stdout,
@@ -319,6 +361,122 @@ fn default_policy_for(tool: &str) -> String {
         "echo" => "never".to_string(),
         _ => "on_request".to_string(),
     }
+}
+
+// -------- Audit helpers --------
+struct AuditOpts {
+    audit_enabled: bool,
+    audit_path: PathBuf,
+    hmac_key_path: PathBuf,
+    auto_yes: bool,
+}
+
+fn load_or_create_key(path: &Path) -> Vec<u8> {
+    if let Ok(k) = fs::read(path) {
+        if k.len() >= 32 {
+            return k;
+        }
+    }
+    let mut key = vec![0u8; 32];
+    OsRng.fill_bytes(&mut key);
+    if let Some(dir) = path.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    let _ = fs::write(path, &key);
+    key
+}
+
+fn append_signed(path: &Path, key_path: &Path, json_line_no_sig: &str) {
+    if let Some(dir) = path.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    let key = load_or_create_key(key_path);
+    let mut mac = HmacSha256::new_from_slice(&key).expect("HMAC key");
+    mac.update(json_line_no_sig.as_bytes());
+    let sig = base64::engine::general_purpose::STANDARD
+        .encode(mac.finalize().into_bytes());
+    let full = format!(
+        r#"{},"sig":"{}"}}"#,
+        json_line_no_sig.trim_end_matches('}'),
+        sig
+    );
+    let _ = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut f| {
+            use std::io::Write;
+            f.write_all(full.as_bytes())?;
+            f.write_all(b"\n")
+        })
+        .map_err(|e| eprintln!("audit append failed: {e}"));
+}
+
+fn audit_pre(opts: &AuditOpts, tool: &str, phase: &str) {
+    if !opts.audit_enabled {
+        return;
+    }
+    let ts = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let line = format!(
+        r#"{{"ts":"{ts}","tool":"{tool}","phase":"{phase}","policy":"n/a","auto_yes":{}}}"#,
+        opts.auto_yes
+    );
+    append_signed(&opts.audit_path.as_path(), &opts.hmac_key_path.as_path(), &line);
+}
+
+fn audit_done(opts: &AuditOpts, tool: &str, ok: bool, dur_ms: u128, err: Option<&str>) {
+    if !opts.audit_enabled {
+        return;
+    }
+    let ts = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let base = if let Some(e) = err {
+        format!(
+            r#"{{"ts":"{ts}","tool":"{tool}","phase":"done","ok":{ok},"duration_ms":{dur_ms},"error":{},"policy":"n/a","auto_yes":{}}}"#,
+            serde_json::to_string(e).unwrap(),
+            opts.auto_yes
+        )
+    } else {
+        format!(
+            r#"{{"ts":"{ts}","tool":"{tool}","phase":"done","ok":{ok},"duration_ms":{dur_ms},"policy":"n/a","auto_yes":{}}}"#,
+            opts.auto_yes
+        )
+    };
+    append_signed(&opts.audit_path.as_path(), &opts.hmac_key_path.as_path(), &base);
+}
+
+// --- helper de dump de politique (JSON) ---
+pub fn policy_dump_json(config_path: Option<&std::path::Path>) -> serde_json::Value {
+    use std::collections::BTreeMap;
+
+    // on réutilise la logique existante
+    let cfg = match config_path {
+        Some(p) => load_policies(Some(&p.to_path_buf())).unwrap_or_else(|_| default_policies()),
+        None => default_policies(),
+    };
+
+    // defaults visibles par le superviseur
+    let mut tools: BTreeMap<String, String> = BTreeMap::from([
+        ("devit.tool_list".to_string(), "never".to_string()),
+        ("devit.tool_call".to_string(), "on_request".to_string()),
+        ("plugin.invoke".to_string(), "on_request".to_string()),
+        ("echo".to_string(), "never".to_string()),
+    ]);
+
+    // merge avec la map interne
+    for k in ["devit.tool_list", "devit.tool_call", "plugin.invoke", "echo"] {
+        let eff = cfg
+            .0
+            .get(k)
+            .cloned()
+            .unwrap_or_else(|| default_policy_for(k));
+        tools.insert(k.to_string(), eff);
+    }
+
+    // expose aussi un “wildcard” par défaut
+    serde_json::json!({
+        "default": "on_request",
+        "tools": tools
+    })
 }
 
 fn run_devit_list(bin: &PathBuf, timeout: Duration) -> Result<Value> {
