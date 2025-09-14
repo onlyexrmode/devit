@@ -12,7 +12,7 @@ DEVIT_BIN_NAME := $(notdir $(DEVIT_BIN))
 PLUGINS_DIR ?= .devit/plugins
 
 .PHONY: fmt fmt-check fmt-fix clippy lint test test-cli build build-release smoke ci check verify help \
-        build-cli run-cli release-cli check-cli ci-cli help-cli plugin-echo-sum
+        build-cli run-cli release-cli check-cli ci-cli help-cli plugin-echo-sum plugin-echo-sum-run
 
 help:
 	@echo "Targets: fmt | fmt-check | fmt-fix | clippy | lint | test | test-cli | build | build-release | smoke | check | verify | ci"
@@ -194,6 +194,10 @@ plugin-echo-sum:
 	  'env = []' \
 	  > "$(PLUGINS_DIR)/echo_sum/devit-plugin.toml"
 	@echo "[plugin-echo-sum] done"
+
+plugin-echo-sum-run: plugin-echo-sum
+	@echo "[plugin-echo-sum-run] invoking echo_sum with {a:1,b:2}"
+	@echo '{"a":1,"b":2}' | cargo run -p $(DEVIT_PKG) --features experimental --bin devit-plugin -- invoke --id echo_sum
 
 # Generic IDs generator: N defaults to 50 (usage: make bench-ids N=50)
 bench-ids:

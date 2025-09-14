@@ -115,9 +115,14 @@ fn ensure_bin_exists<S: AsRef<OsStr>>(bin: S) -> Result<()> {
     }
 }
 
+fn wasmtime_bin() -> String {
+    env::var("WASMTIME_BIN").unwrap_or_else(|_| "wasmtime".to_string())
+}
+
 /// Invoque un plugin par manifeste, lit JSON depuis `stdin_json` et renvoie JSON stdout.
 pub fn invoke_manifest(manifest_path: &Path, stdin_json: &str, per_msg_timeout: Option<Duration>) -> Result<Value> {
-    ensure_bin_exists("wasmtime")?;
+    let wbin = wasmtime_bin();
+    ensure_bin_exists(&wbin)?;
 
     let manifest = load_manifest(manifest_path)?;
     // Résoudre le chemin du .wasm relativement au manifest
@@ -128,7 +133,7 @@ pub fn invoke_manifest(manifest_path: &Path, stdin_json: &str, per_msg_timeout: 
     let timeout = per_msg_timeout.unwrap_or_else(timeout_from_env);
 
     // Préparer la commande wasmtime
-    let mut cmd = Command::new("wasmtime");
+    let mut cmd = Command::new(&wbin);
     cmd.arg("run");
     // Ajout de pré-ouvertures explicites (sandbox FS fermée sinon).
     for d in &manifest.allowed_dirs {
