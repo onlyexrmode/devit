@@ -1,10 +1,10 @@
 //! Exemple de plugin WASI: lit {"a":number,"b":number} et renvoie {"sum":a+b,"echo":...}
 //! Build:
-//!   rustup target add wasm32-wasi
-//!   cargo build --target wasm32-wasi --release
+//!   rustup target add wasm32-wasip1
+//!   cargo build --target wasm32-wasip1 --release
 //! Copie:
 //!   mkdir -p .devit/plugins/echo_sum
-//!   cp target/wasm32-wasi/release/echo_sum.wasm .devit/plugins/echo_sum/echo_sum.wasm
+//!   cp target/wasm32-wasip1/release/echo_sum.wasm .devit/plugins/echo_sum/echo_sum.wasm
 //!   cat > .devit/plugins/echo_sum/devit-plugin.toml <<'TOML'
 //!   id = "echo_sum"
 //!   name = "Echo Sum"

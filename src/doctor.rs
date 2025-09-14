@@ -78,10 +78,14 @@ fn check_wasm32_wasi_target() -> ToolCheck {
                 return ToolCheck { status: Status::Unknown, detail: Some(format!("rustup exit: {}", out.status)) };
             }
             let s = String::from_utf8_lossy(&out.stdout);
-            if s.lines().any(|l| l.trim() == "wasm32-wasi") {
+            let has_wasi = s.lines().any(|l| {
+                let t = l.trim();
+                t == "wasm32-wasi" || t == "wasm32-wasip1"
+            });
+            if has_wasi {
                 ToolCheck { status: Status::Ok, detail: None }
             } else {
-                ToolCheck { status: Status::NotInstalled, detail: Some("missing wasm32-wasi".into()) }
+                ToolCheck { status: Status::NotInstalled, detail: Some("missing wasm32-wasi/wasip1".into()) }
             }
         }
         Err(_) => ToolCheck { status: Status::Unknown, detail: Some("rustup not found".into()) },
@@ -175,7 +179,15 @@ pub fn print_human(report: &DoctorReport) {
     println!("rustc: {} {}", icon(&report.rustc.status), report.rustc.detail.as_deref().unwrap_or(""));
     println!("cargo: {} {}", icon(&report.cargo.status), report.cargo.detail.as_deref().unwrap_or(""));
     println!("bwrap: {} {}", icon(&report.bwrap.status), report.bwrap.detail.as_deref().unwrap_or("not found or no version"));
-    println!("wasm32-wasi: {} {}", icon(&report.wasm32_wasi_target.status), report.wasm32_wasi_target.detail.as_deref().unwrap_or(""));
+    println!(
+        "WASI target: {} {}",
+        icon(&report.wasm32_wasi_target.status),
+        report
+            .wasm32_wasi_target
+            .detail
+            .as_deref()
+            .unwrap_or("")
+    );
     if let Some(b) = &report.backends {
         if let Some(lm) = &b.lm_studio {
             println!("LM Studio: {} {}", icon(&lm.status), lm.detail.as_deref().unwrap_or(""));

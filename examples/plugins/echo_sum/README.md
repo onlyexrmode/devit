@@ -3,20 +3,20 @@
 Minimal WASI plugin that reads `{\"a\":number, \"b\":number}` on stdin and outputs `{\"sum\": a+b}` on stdout.
 
 ## Requirements
-- Rust target: `wasm32-wasi`
+- Rust target: `wasm32-wasip1`
 - Wasmtime runtime in PATH: `wasmtime` (https://wasmtime.dev)
 
 ## Build
 ```
-rustup target add wasm32-wasi
-cargo build -p devit-plugin-echo-sum --target wasm32-wasi --release
+rustup target add wasm32-wasip1
+cargo build -p devit-plugin-echo-sum --target wasm32-wasip1 --release
 ```
-The artifact will be at `target/wasm32-wasi/release/echo_sum.wasm`.
+The artifact will be at `target/wasm32-wasip1/release/echo_sum.wasm`.
 
 ## Install to local registry
 ```
 mkdir -p .devit/plugins/echo_sum
-cp target/wasm32-wasi/release/echo_sum.wasm .devit/plugins/echo_sum/
+cp target/wasm32-wasip1/release/echo_sum.wasm .devit/plugins/echo_sum/
 cat > .devit/plugins/echo_sum/devit-plugin.toml <<'TOML'
 id = "echo_sum"
 name = "Echo Sum"

@@ -5,7 +5,7 @@ use devit::doctor::{exit_code, gather_report, print_human, print_json, DoctorArg
 /// Diagnostic d'environnement DevIt (isolé, expérimental).
 #[derive(Parser, Debug)]
 #[command(name = "devit-doctor")]
-#[command(about = "Rapport rapide: toolchain, sandbox, wasm32-wasi, backends LLM.")]
+#[command(about = "Rapport rapide: toolchain, sandbox, WASI target, backends LLM.")]
 struct Cli {
     /// Sortie JSON (machine-readable).
     #[arg(long, action = ArgAction::SetTrue)]

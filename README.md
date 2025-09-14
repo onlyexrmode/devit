@@ -33,9 +33,9 @@ Plugins (WASM/WASI)
   - `allowed_dirs = []` (optional preopened dirs)
   - `env = []` (optional `KEY=VALUE` entries)
 - Build example plugin:
-  - `rustup target add wasm32-wasi`
-  - `cargo build -p devit-plugin-echo-sum --target wasm32-wasi --release` (from `examples/plugins/echo_sum`)
-  - Copy to registry: `mkdir -p .devit/plugins/echo_sum && cp target/wasm32-wasi/release/echo_sum.wasm .devit/plugins/echo_sum/`
+  - Install WASI target (new naming): `rustup target add wasm32-wasip1` (or `wasm32-wasi` on older toolchains)
+  - `cargo build -p devit-plugin-echo-sum --target wasm32-wasip1 --release` (from `examples/plugins/echo_sum`)
+  - Copy to registry: `mkdir -p .devit/plugins/echo_sum && cp examples/plugins/echo_sum/target/wasm32-wasip1/release/echo_sum.wasm .devit/plugins/echo_sum/`
   - Write manifest per above.
 - CLI usage (JSON I/O):
   - List: `cargo run -p devit-cli --features experimental --bin devit-plugin -- list`
@@ -141,9 +141,9 @@ Plugins (WASM/WASI)
   - `id = "echo_sum"`, `name = "Echo Sum"`, `wasm = "echo_sum.wasm"`, `version = "0.1.0"`
   - `allowed_dirs = []` (répertoires pré-ouverts facultatifs), `env = []` (variables `KEY=VALUE`).
 - Construire l’exemple:
-  - `rustup target add wasm32-wasi`
-  - `cargo build -p devit-plugin-echo-sum --target wasm32-wasi --release` (depuis `examples/plugins/echo_sum`)
-  - Copier: `mkdir -p .devit/plugins/echo_sum && cp target/wasm32-wasi/release/echo_sum.wasm .devit/plugins/echo_sum/`
+  - Installer la cible WASI (nouvelle dénomination): `rustup target add wasm32-wasip1` (ou `wasm32-wasi`)
+  - `cargo build -p devit-plugin-echo-sum --target wasm32-wasip1 --release` (depuis `examples/plugins/echo_sum`)
+  - Copier: `mkdir -p .devit/plugins/echo_sum && cp examples/plugins/echo_sum/target/wasm32-wasip1/release/echo_sum.wasm .devit/plugins/echo_sum/`
   - Écrire le manifeste comme ci-dessus.
 - CLI (I/O JSON):
   - Lister: `cargo run -p devit-cli --features experimental --bin devit-plugin -- list`

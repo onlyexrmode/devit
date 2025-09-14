@@ -172,20 +172,27 @@ help-cli:
 # ===== Plugins (WASM/WASI) helpers =====
 plugin-echo-sum:
 	@echo "[plugin-echo-sum] ensure wasm32-wasi target"
-	@if ! rustup target list --installed | grep -q wasm32-wasi; then \
-	  rustup target add wasm32-wasi; \
-	fi
-	@echo "[plugin-echo-sum] build example plugin (echo_sum)"
-	cargo build --manifest-path examples/plugins/echo_sum/Cargo.toml --target wasm32-wasi --release
-	@echo "[plugin-echo-sum] install into $(PLUGINS_DIR)/echo_sum"
-	mkdir -p $(PLUGINS_DIR)/echo_sum
-	cp target/wasm32-wasi/release/echo_sum.wasm $(PLUGINS_DIR)/echo_sum/
-	@if [ ! -f "$(PLUGINS_DIR)/echo_sum/devit-plugin.toml" ]; then \
-	  cat > "$(PLUGINS_DIR)/echo_sum/devit-plugin.toml" <<'TOML'; \
-	id = "echo_sum"\nname = "Echo Sum"\nwasm = "echo_sum.wasm"\nversion = "0.1.0"\nallowed_dirs = []\nenv = []\nTOML\n \
-	else \
-	  echo "[plugin-echo-sum] manifest exists; keeping existing $(PLUGINS_DIR)/echo_sum/devit-plugin.toml"; \
-	fi
+	@# Determine supported WASI target (wasm32-wasi or wasm32-wasip1)
+	@TARGET_WASI=$$(rustup target list --installed | awk '/^wasm32-wasi(p1)?$$/{print $$1; exit}'); \
+	if [ -z "$$TARGET_WASI" ]; then \
+	  rustup target add wasm32-wasi || rustup target add wasm32-wasip1; \
+	  TARGET_WASI=$$(rustup target list --installed | awk '/^wasm32-wasi(p1)?$$/{print $$1; exit}'); \
+	fi; \
+	echo "[plugin-echo-sum] using target: $$TARGET_WASI"; \
+	echo "[plugin-echo-sum] build example plugin (echo_sum)"; \
+	PL_EX=examples/plugins/echo_sum; \
+	cargo build --manifest-path $$PL_EX/Cargo.toml --target $$TARGET_WASI --release; \
+	ART=$$PL_EX/target/$$TARGET_WASI/release/echo_sum.wasm; \
+	mkdir -p $(PLUGINS_DIR)/echo_sum; \
+	cp $$ART $(PLUGINS_DIR)/echo_sum/
+	@printf '%s\n' \
+	  'id = "echo_sum"' \
+	  'name = "Echo Sum"' \
+	  'wasm = "echo_sum.wasm"' \
+	  'version = "0.1.0"' \
+	  'allowed_dirs = []' \
+	  'env = []' \
+	  > "$(PLUGINS_DIR)/echo_sum/devit-plugin.toml"
 	@echo "[plugin-echo-sum] done"
 
 # Generic IDs generator: N defaults to 50 (usage: make bench-ids N=50)
