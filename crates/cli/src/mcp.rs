@@ -117,6 +117,16 @@ impl McpClient {
         Ok(v)
     }
 
+    pub fn tool_call(&mut self, name: &str, args: Value) -> Result<Value> {
+        self.write_json(&json!({
+            "type": "tool.call",
+            "payload": { "name": name, "args": args }
+        }))?;
+        let v = self.read_json_line_timeout()?;
+        ensure_type(&v, "tool.result")?;
+        Ok(v)
+    }
+
     fn write_json(&mut self, v: &Value) -> Result<()> {
         let s = serde_json::to_string(v)?;
         self.stdin.write_all(s.as_bytes())?;

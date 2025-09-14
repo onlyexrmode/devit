@@ -31,6 +31,13 @@ struct Cli {
     #[arg(long)]
     echo: Option<String>,
 
+    /// Appel générique: nom d'outil MCP (ex: devit.tool_list)
+    #[arg(long = "call")]
+    call_name: Option<String>,
+    /// Arguments JSON pour l'appel générique (--call)
+    #[arg(long = "json")]
+    call_args_json: Option<String>,
+
     /// Dry-run: n'exécute pas la commande, affiche juste le plan
     #[arg(long, action = ArgAction::SetTrue)]
     dry_run: bool,
@@ -95,6 +102,17 @@ fn real_main() -> Result<()> {
     if let Some(text) = cli.echo.as_deref() {
         let r = client.tool_echo(text).with_context(|| "echo call failed")?;
         println!("{}", serde_json::to_string(&r)?);
+        return Ok(());
+    }
+
+    if let Some(name) = cli.call_name.as_deref() {
+        let args_v: serde_json::Value = if let Some(js) = cli.call_args_json.as_deref() {
+            serde_json::from_str(js).context("--json must be valid JSON")?
+        } else {
+            serde_json::json!({})
+        };
+        let v = client.tool_call(name, args_v)?;
+        println!("{}", serde_json::to_string(&v)?);
         return Ok(());
     }
 
