@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
+use std::{collections::HashMap, fs};
 
 #[derive(Parser, Debug)]
 #[command(name = "devit-mcpd")]
@@ -23,6 +24,12 @@ struct Cli {
     /// Per-message timeout in seconds (fallback DEVIT_TIMEOUT_SECS, else 30)
     #[arg(long = "timeout-secs")]
     timeout_secs: Option<u64>,
+    /// Auto-approve actions gated by policy
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    yes: bool,
+    /// Config path for approval policies (default: .devit/devit.toml)
+    #[arg(long = "config")]
+    config_path: Option<PathBuf>,
 }
 
 fn main() {
@@ -38,6 +45,7 @@ fn real_main() -> Result<()> {
     let mut stdout = io::stdout();
     let mut lines = stdin.lock().lines();
     let timeout = timeout_from_cli_env(cli.timeout_secs);
+    let policies = load_policies(cli.config_path.as_ref()).unwrap_or_default();
 
     while let Some(line) = lines.next() {
         let line = line?;
@@ -81,8 +89,27 @@ fn real_main() -> Result<()> {
                     .get("name")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("missing tool name"))?;
+                let policy = policies
+                    .0
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| default_policy_for(name));
+                // on_request/untrusted: require approval before running
+                if (policy == "on_request" || policy == "untrusted") && !cli.yes {
+                    writeln!(
+                        stdout,
+                        "{}",
+                        json!({
+                            "type": "tool.error",
+                            "payload": {"approval_required": true, "policy": policy, "phase": "pre"}
+                        })
+                    )?;
+                    stdout.flush()?;
+                    continue;
+                }
                 match name {
                     "echo" => {
+                        // echo allowed unless explicitly restricted
                         let text = payload
                             .get("args")
                             .and_then(|a| a.get("text"))
@@ -102,15 +129,39 @@ fn real_main() -> Result<()> {
                             .devit_bin
                             .clone()
                             .unwrap_or_else(|| PathBuf::from("devit"));
-                        let out = run_devit_list(&bin, timeout)?;
-                        writeln!(
-                            stdout,
-                            "{}",
-                            json!({
-                                "type": "tool.result",
-                                "payload": {"name": name, "result": out}
-                            })
-                        )?;
+                        match run_devit_list(&bin, timeout) {
+                            Ok(out) => {
+                                writeln!(
+                                    stdout,
+                                    "{}",
+                                    json!({
+                                        "type": "tool.result",
+                                        "payload": {"name": name, "result": out}
+                                    })
+                                )?;
+                            }
+                            Err(e) => {
+                                if policy == "on_failure" && !cli.yes {
+                                    writeln!(
+                                        stdout,
+                                        "{}",
+                                        json!({
+                                            "type": "tool.error",
+                                            "payload": {"approval_required": true, "policy": policy, "phase": "post"}
+                                        })
+                                    )?;
+                                } else {
+                                    writeln!(
+                                        stdout,
+                                        "{}",
+                                        json!({
+                                            "type": "tool.error",
+                                            "payload": {"message": e.to_string()}
+                                        })
+                                    )?;
+                                }
+                            }
+                        }
                     }
                     "devit.tool_call" => {
                         let bin = cli
@@ -118,15 +169,56 @@ fn real_main() -> Result<()> {
                             .clone()
                             .unwrap_or_else(|| PathBuf::from("devit"));
                         let args_json = payload.get("args").cloned().unwrap_or(json!({}));
-                        let out = run_devit_call(&bin, &args_json, timeout)?;
-                        writeln!(
-                            stdout,
-                            "{}",
-                            json!({
-                                "type": "tool.result",
-                                "payload": {"name": name, "result": out}
-                            })
-                        )?;
+                        match run_devit_call(&bin, &args_json, timeout) {
+                            Ok(out) => {
+                                // on_failure: if DevIt reports ok=false, require approval (post)
+                                let is_fail = out
+                                    .get("ok")
+                                    .and_then(|v| v.as_bool())
+                                    .map(|b| !b)
+                                    .unwrap_or(false);
+                                if policy == "on_failure" && is_fail && !cli.yes {
+                                    writeln!(
+                                        stdout,
+                                        "{}",
+                                        json!({
+                                            "type": "tool.error",
+                                            "payload": {"approval_required": true, "policy": policy, "phase": "post"}
+                                        })
+                                    )?;
+                                } else {
+                                    writeln!(
+                                        stdout,
+                                        "{}",
+                                        json!({
+                                            "type": "tool.result",
+                                            "payload": {"name": name, "result": out}
+                                        })
+                                    )?;
+                                }
+                            }
+                            Err(e) => {
+                                if policy == "on_failure" && !cli.yes {
+                                    writeln!(
+                                        stdout,
+                                        "{}",
+                                        json!({
+                                            "type": "tool.error",
+                                            "payload": {"approval_required": true, "policy": policy, "phase": "post"}
+                                        })
+                                    )?;
+                                } else {
+                                    writeln!(
+                                        stdout,
+                                        "{}",
+                                        json!({
+                                            "type": "tool.error",
+                                            "payload": {"message": e.to_string()}
+                                        })
+                                    )?;
+                                }
+                            }
+                        }
                     }
                     other => {
                         writeln!(
@@ -172,6 +264,55 @@ fn timeout_from_cli_env(override_secs: Option<u64>) -> Duration {
         }
     }
     Duration::from_secs(30)
+}
+
+#[derive(Default)]
+struct Policies(HashMap<String, String>);
+
+fn load_policies(path: Option<&PathBuf>) -> Result<Policies> {
+    let path = if let Some(p) = path {
+        p.clone()
+    } else {
+        PathBuf::from(".devit/devit.toml")
+    };
+    if !path.exists() {
+        return Ok(default_policies());
+    }
+    let s = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    // Try format: [mcp.approvals]\n<tool> = "policy"
+    #[derive(serde::Deserialize, Default)]
+    struct Root {
+        mcp: Option<Mcp>,
+    }
+    #[derive(serde::Deserialize, Default)]
+    struct Mcp {
+        approvals: Option<HashMap<String, String>>,
+    }
+    let r: Root = toml::from_str(&s).context("parse TOML")?;
+    let mut out = default_policies();
+    if let Some(map) = r.mcp.and_then(|m| m.approvals) {
+        for (k, v) in map.into_iter() {
+            out.0.insert(k, v.to_ascii_lowercase());
+        }
+    }
+    Ok(out)
+}
+
+fn default_policies() -> Policies {
+    let mut m = HashMap::new();
+    m.insert("devit.tool_list".to_string(), "never".to_string());
+    m.insert("devit.tool_call".to_string(), "on_request".to_string());
+    m.insert("echo".to_string(), "never".to_string());
+    Policies(m)
+}
+
+fn default_policy_for(tool: &str) -> String {
+    match tool {
+        "devit.tool_list" => "never".to_string(),
+        "devit.tool_call" => "on_request".to_string(),
+        "echo" => "never".to_string(),
+        _ => "on_request".to_string(),
+    }
 }
 
 fn run_devit_list(bin: &PathBuf, timeout: Duration) -> Result<Value> {

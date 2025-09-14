@@ -123,7 +123,7 @@ impl McpClient {
             "payload": { "name": name, "args": args }
         }))?;
         let v = self.read_json_line_timeout()?;
-        ensure_type(&v, "tool.result")?;
+        // Accept tool.result or tool.error (approval_required)
         Ok(v)
     }
 

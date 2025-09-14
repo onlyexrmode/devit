@@ -13,6 +13,7 @@ mod devit_cli_mcp;
 
 use anyhow::{anyhow, Context, Result};
 use serde_json::json;
+use std::io::{self, Write};
 use std::time::Duration;
 
 #[derive(Parser, Debug)]
@@ -70,14 +71,14 @@ fn real_main() -> Result<()> {
     let timeout = timeout(cli.timeout_secs);
 
     if cli.dry_run {
-        println!(
+        safe_print_line(&format!(
             "{{\"dry_run\":true,\"cmd\":{cmd},\"timeout-secs\":{t},\
              \"handshake_only\":{h},\"echo\":{echo}}}",
             cmd = serde_json::to_string(&cli.cmd)?,
             t = timeout.as_secs(),
             h = cli.handshake_only,
             echo = serde_json::to_string(&cli.echo)?,
-        );
+        ));
         return Ok(());
     }
 
@@ -87,13 +88,10 @@ fn real_main() -> Result<()> {
     let caps = client
         .handshake(&cli.client_version)
         .with_context(|| "handshake failed")?;
-    println!(
-        "{}",
-        serde_json::to_string(&json!({
-            "type": "handshake.ok",
-            "payload": { "tools": caps.tools }
-        }))?
-    );
+    safe_print_json(&json!({
+        "type": "handshake.ok",
+        "payload": { "tools": caps.tools }
+    }))?;
 
     if cli.handshake_only {
         return Ok(());
@@ -101,7 +99,7 @@ fn real_main() -> Result<()> {
 
     if let Some(text) = cli.echo.as_deref() {
         let r = client.tool_echo(text).with_context(|| "echo call failed")?;
-        println!("{}", serde_json::to_string(&r)?);
+        safe_print_json(&r)?;
         return Ok(());
     }
 
@@ -112,7 +110,7 @@ fn real_main() -> Result<()> {
             serde_json::json!({})
         };
         let v = client.tool_call(name, args_v)?;
-        println!("{}", serde_json::to_string(&v)?);
+        safe_print_json(&v)?;
         return Ok(());
     }
 
@@ -124,4 +122,27 @@ fn timeout(override_secs: Option<u64>) -> Duration {
         return Duration::from_secs(s);
     }
     mcp_mod::timeout_from_env()
+}
+
+fn safe_print_json(v: &serde_json::Value) -> Result<()> {
+    let s = serde_json::to_string(v)?;
+    safe_print_line(&s);
+    Ok(())
+}
+
+fn safe_print_line(s: &str) {
+    let mut out = io::stdout();
+    if let Err(e) = (|| -> io::Result<()> {
+        out.write_all(s.as_bytes())?;
+        out.write_all(b"\n")?;
+        out.flush()?;
+        Ok(())
+    })() {
+        if e.kind() == io::ErrorKind::BrokenPipe {
+            std::process::exit(0);
+        } else {
+            eprintln!("error: {e}");
+            std::process::exit(2);
+        }
+    }
 }
