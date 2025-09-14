@@ -49,15 +49,6 @@ struct Cli {
     /// Chemin de la clé HMAC
     #[arg(long, default_value = ".devit/hmac.key")]
     hmac_key: PathBuf,
-    /// Quotas: appels/minute par tool_key (défaut 60)
-    #[arg(long, default_value_t = 60)]
-    max_calls_per_min: u32,
-    /// Quotas: taille max JSON (KB) (défaut 256)
-    #[arg(long, default_value_t = 256)]
-    max_json_kb: usize,
-    /// Quotas: cooldown entre appels (ms) (défaut 250)
-    #[arg(long, default_value_t = 250)]
-    cooldown_ms: u64,
 }
 
 fn main() {
@@ -80,11 +71,6 @@ fn real_main() -> Result<()> {
         hmac_key_path: cli.hmac_key.clone(),
         auto_yes: cli.yes,
     };
-    let mut rl = RateLimiter::new(Limits {
-        max_calls_per_min: cli.max_calls_per_min,
-        max_json_kb: cli.max_json_kb,
-        cooldown: Duration::from_millis(cli.cooldown_ms),
-    });
 
     // --policy-dump: print effective approvals JSON and exit
     if cli.policy_dump {
@@ -93,6 +79,11 @@ fn real_main() -> Result<()> {
         return Ok(());
     }
 
+    let mut rl = RateLimiter::new(Limits {
+        max_calls_per_min: 60,
+        max_json_kb: 256,
+        cooldown: Duration::from_millis(250),
+    });
     while let Some(line) = lines.next() {
         let line = line?;
         if line.trim().is_empty() {
@@ -253,45 +244,11 @@ fn real_main() -> Result<()> {
                             .devit_bin
                             .clone()
                             .unwrap_or_else(|| PathBuf::from("devit"));
-                        // ratelimit (no args for tool_list)
-                        let tool_key = "devit.tool_list";
-                        let now = Instant::now();
-                        if let Err(e) = rl.allow(tool_key, now) {
-                            audit_pre(&audit, tool_key, "rate-limit");
-                            match e {
-                                RateLimitErr::TooManyCalls { limit } => {
-                                    writeln!(
-                                        stdout,
-                                        "{}",
-                                        json!({"type":"tool.error","payload":{
-                                            "name": tool_key,
-                                            "rate_limited": true,
-                                            "reason": "too_many_calls",
-                                            "limit_per_min": limit
-                                        }})
-                                    )?;
-                                    continue;
-                                }
-                                RateLimitErr::Cooldown { ms_left } => {
-                                    writeln!(
-                                        stdout,
-                                        "{}",
-                                        json!({"type":"tool.error","payload":{
-                                            "name": tool_key,
-                                            "rate_limited": true,
-                                            "reason": "cooldown",
-                                            "cooldown_ms": ms_left
-                                        }})
-                                    )?;
-                                    continue;
-                                }
-                            }
-                        }
                         let start = Instant::now();
                         match run_devit_list(&bin, timeout) {
                             Ok(out) => {
                                 let dur = start.elapsed().as_millis();
-                                audit_done(&audit, tool_key, true, dur, None);
+                                audit_done(&audit, name, true, dur, None);
                                 writeln!(
                                     stdout,
                                     "{}",
@@ -303,7 +260,7 @@ fn real_main() -> Result<()> {
                             }
                             Err(e) => {
                                 let dur = start.elapsed().as_millis();
-                                audit_done(&audit, tool_key, false, dur, Some(&e.to_string()));
+                                audit_done(&audit, name, false, dur, Some(&e.to_string()));
                                 if policy == "on_failure" && !cli.yes {
                                     writeln!(
                                         stdout,
@@ -332,56 +289,6 @@ fn real_main() -> Result<()> {
                             .clone()
                             .unwrap_or_else(|| PathBuf::from("devit"));
                         let args_json = payload.get("args").cloned().unwrap_or(json!({}));
-                        let tool_key = "devit.tool_call";
-                        // size check
-                        let args_len = args_json.to_string().as_bytes().len();
-                        if args_len > rl.limits.max_json_kb * 1024 {
-                            audit_pre(&audit, tool_key, "payload-too-large");
-                            writeln!(
-                                stdout,
-                                "{}",
-                                json!({"type":"tool.error","payload":{
-                                    "name": tool_key,
-                                    "payload_too_large": true,
-                                    "max_json_kb": rl.limits.max_json_kb,
-                                    "got_bytes": args_len as u64
-                                }})
-                            )?;
-                            continue;
-                        }
-                        // ratelimit
-                        let now = Instant::now();
-                        if let Err(e) = rl.allow(tool_key, now) {
-                            audit_pre(&audit, tool_key, "rate-limit");
-                            match e {
-                                RateLimitErr::TooManyCalls { limit } => {
-                                    writeln!(
-                                        stdout,
-                                        "{}",
-                                        json!({"type":"tool.error","payload":{
-                                            "name": tool_key,
-                                            "rate_limited": true,
-                                            "reason": "too_many_calls",
-                                            "limit_per_min": limit
-                                        }})
-                                    )?;
-                                    continue;
-                                }
-                                RateLimitErr::Cooldown { ms_left } => {
-                                    writeln!(
-                                        stdout,
-                                        "{}",
-                                        json!({"type":"tool.error","payload":{
-                                            "name": tool_key,
-                                            "rate_limited": true,
-                                            "reason": "cooldown",
-                                            "cooldown_ms": ms_left
-                                        }})
-                                    )?;
-                                    continue;
-                                }
-                            }
-                        }
                         let start = Instant::now();
                         match run_devit_call(&bin, &args_json, timeout) {
                             Ok(out) => {
@@ -392,7 +299,7 @@ fn real_main() -> Result<()> {
                                     .map(|b| !b)
                                     .unwrap_or(false);
                                 let dur = start.elapsed().as_millis();
-                                audit_done(&audit, tool_key, !is_fail, dur, None);
+                                audit_done(&audit, name, !is_fail, dur, None);
                                 if policy == "on_failure" && is_fail && !cli.yes {
                                     writeln!(
                                         stdout,
@@ -415,7 +322,7 @@ fn real_main() -> Result<()> {
                             }
                             Err(e) => {
                                 let dur = start.elapsed().as_millis();
-                                audit_done(&audit, tool_key, false, dur, Some(&e.to_string()));
+                                audit_done(&audit, name, false, dur, Some(&e.to_string()));
                                 if policy == "on_failure" && !cli.yes {
                                     writeln!(
                                         stdout,
@@ -657,15 +564,15 @@ fn audit_done(opts: &AuditOpts, tool: &str, ok: bool, dur_ms: u128, err: Option<
     }
     let ts = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let base = if let Some(e) = err {
+        let error_json = serde_json::to_string(e).unwrap();
+        let auto_yes = opts.auto_yes;
         format!(
-            r#"{{"ts":"{ts}","tool":"{tool}","phase":"done","ok":{ok},"duration_ms":{dur_ms},"error":{},"policy":"n/a","auto_yes":{}}}"#,
-            serde_json::to_string(e).unwrap(),
-            opts.auto_yes
+            r#"{{"ts":"{ts}","tool":"{tool}","phase":"done","ok":{ok},"duration_ms":{dur_ms},"error":{error_json},"policy":"n/a","auto_yes":{auto_yes}}}"#,
         )
     } else {
+        let auto_yes = opts.auto_yes;
         format!(
-            r#"{{"ts":"{ts}","tool":"{tool}","phase":"done","ok":{ok},"duration_ms":{dur_ms},"policy":"n/a","auto_yes":{}}}"#,
-            opts.auto_yes
+            r#"{{"ts":"{ts}","tool":"{tool}","phase":"done","ok":{ok},"duration_ms":{dur_ms},"policy":"n/a","auto_yes":{auto_yes}}}"#,
         )
     };
     append_signed(
