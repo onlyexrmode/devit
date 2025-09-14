@@ -12,16 +12,10 @@ fn main() {
             Some(s)
         }
     }
-    let describe = run(Command::new("git").args([
-        "describe",
-        "--tags",
-        "--always",
-        "--dirty=-m",
-    ]))
-    .unwrap_or_else(|| "unknown".to_string());
+    let describe = run(Command::new("git").args(["describe", "--tags", "--always", "--dirty=-m"]))
+        .unwrap_or_else(|| "unknown".to_string());
     let sha = run(Command::new("git").args(["rev-parse", "--short=12", "HEAD"]))
         .unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=DEVIT_GIT_DESCRIBE={}", describe);
     println!("cargo:rustc-env=DEVIT_GIT_SHA={}", sha);
 }
-

@@ -380,12 +380,8 @@ fn real_main() -> Result<()> {
                             }
                         }
                         let start = Instant::now();
-                        let v = policy_effective_json(
-                            &audit,
-                            &policies,
-                            &rl.limits,
-                            &server_version,
-                        );
+                        let v =
+                            policy_effective_json(&audit, &policies, &rl.limits, &server_version);
                         let dur = start.elapsed().as_millis();
                         audit_done(&audit, tool_key, true, dur, None);
                         writeln!(
