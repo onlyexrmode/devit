@@ -19,6 +19,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: guard: no tracked files under dist/
+        run: |
+          set -euo pipefail
+          files=$(git ls-files dist || true)
+          if [ -n "$files" ]; then
+            echo "dist/ contains tracked files:" >&2
+            echo "$files" | sed -n '1,50p' >&2
+            exit 1
+          fi
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
