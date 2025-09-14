@@ -32,10 +32,10 @@ lint: clippy fmt-check
 
 test:
 	cargo test -p devit-common
-	cargo test -p devit --tests
+	cargo test -p devit-cli --tests
 
 test-cli:
-	cargo test -p devit --tests
+	cargo test -p devit-cli --tests
 
 build:
 	cargo build --workspace
@@ -68,7 +68,7 @@ bench-ids50:
 
 bench-smoke:
 	set -e
-	cargo build -p devit --release
+	cargo build -p $(DEVIT_PKG) --release
 	export DEVIT_BIN="$(PWD)/target/release/devit"
 	export DEVIT_CONFIG="$(PWD)/bench/devit.bench.toml"
 	export DEVIT_BACKEND_URL="http://localhost:11434/v1"
@@ -170,19 +170,14 @@ help-cli:
 	@echo "dist           : package tar.gz + sha256 (local)"
 
 # ===== Plugins (WASM/WASI) helpers =====
+
 plugin-echo-sum:
-	@echo "[plugin-echo-sum] ensure wasm32-wasi target"
-	@# Determine supported WASI target (wasm32-wasi or wasm32-wasip1)
-	@TARGET_WASI=$$(rustup target list --installed | awk '/^wasm32-wasi(p1)?$$/{print $$1; exit}'); \
-	if [ -z "$$TARGET_WASI" ]; then \
-	  rustup target add wasm32-wasi || rustup target add wasm32-wasip1; \
-	  TARGET_WASI=$$(rustup target list --installed | awk '/^wasm32-wasi(p1)?$$/{print $$1; exit}'); \
-	fi; \
-	echo "[plugin-echo-sum] using target: $$TARGET_WASI"; \
-	echo "[plugin-echo-sum] build example plugin (echo_sum)"; \
+	@echo "[plugin-echo-sum] ensure wasm32-wasip1 target (WASI Preview 1)"
+	rustup target add wasm32-wasip1 >/dev/null 2>&1 || true
+	@echo "[plugin-echo-sum] build example plugin (echo_sum)"
 	PL_EX=examples/plugins/echo_sum; \
-	cargo build --manifest-path $$PL_EX/Cargo.toml --target $$TARGET_WASI --release; \
-	ART=$$PL_EX/target/$$TARGET_WASI/release/echo_sum.wasm; \
+	cargo build --manifest-path $$PL_EX/Cargo.toml --target wasm32-wasip1 --release; \
+	ART=$$PL_EX/target/wasm32-wasip1/release/echo_sum.wasm; \
 	mkdir -p $(PLUGINS_DIR)/echo_sum; \
 	cp $$ART $(PLUGINS_DIR)/echo_sum/
 	@printf '%s\n' \

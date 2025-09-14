@@ -122,14 +122,15 @@ fn real_main() -> Result<()> {
                 )?;
             }
             "capabilities" => {
-                // Expose demo tool `echo` and DevIt passthrough tools
+                // Expose tools, including policy introspection
                 writeln!(
                     stdout,
                     "{}",
                     json!({"type":"capabilities","payload":{"tools":[
-                        "echo",
                         "devit.tool_list",
-                        "devit.tool_call"
+                        "devit.tool_call",
+                        "server.policy",
+                        "echo"
                     ]}})
                 )?;
             }
@@ -161,6 +162,76 @@ fn real_main() -> Result<()> {
                     continue;
                 }
                 match name {
+                    "server.policy" => {
+                        let pol = policies
+                            .0
+                            .get("server.policy")
+                            .cloned()
+                            .unwrap_or_else(|| default_policy_for("server.policy"));
+                        if (pol == "on_request" || pol == "untrusted") && !cli.yes {
+                            writeln!(
+                                stdout,
+                                "{}",
+                                json!({
+                                    "type": "tool.error",
+                                    "payload": {"approval_required": true, "policy": pol, "phase": "pre"}
+                                })
+                            )?;
+                            stdout.flush()?;
+                            continue;
+                        }
+                        // rate-limit for server.policy
+                        let tool_key = "server.policy";
+                        let now = Instant::now();
+                        if let Err(e) = rl.allow(tool_key, now) {
+                            audit_pre(&audit, tool_key, "rate-limit");
+                            match e {
+                                RateLimitErr::TooManyCalls { limit } => {
+                                    writeln!(
+                                        stdout,
+                                        "{}",
+                                        json!({"type":"tool.error","payload":{
+                                            "name": tool_key,
+                                            "rate_limited": true,
+                                            "reason": "too_many_calls",
+                                            "limit_per_min": limit
+                                        }})
+                                    )?;
+                                    continue;
+                                }
+                                RateLimitErr::Cooldown { ms_left } => {
+                                    writeln!(
+                                        stdout,
+                                        "{}",
+                                        json!({"type":"tool.error","payload":{
+                                            "name": tool_key,
+                                            "rate_limited": true,
+                                            "reason": "cooldown",
+                                            "cooldown_ms": ms_left
+                                        }})
+                                    )?;
+                                    continue;
+                                }
+                            }
+                        }
+                        let start = Instant::now();
+                        let v = policy_effective_json(
+                            &audit,
+                            &policies,
+                            &rl.limits,
+                            &cli.server_version,
+                        );
+                        let dur = start.elapsed().as_millis();
+                        audit_done(&audit, tool_key, true, dur, None);
+                        writeln!(
+                            stdout,
+                            "{}",
+                            json!({
+                                "type": "tool.result",
+                                "payload": {"ok": true, "name": "server.policy", "policy": v}
+                            })
+                        )?;
+                    }
                     "echo" => {
                         // echo allowed unless explicitly restricted
                         let text = payload
@@ -449,6 +520,7 @@ fn default_policies() -> Policies {
     let mut m = HashMap::new();
     m.insert("devit.tool_list".to_string(), "never".to_string());
     m.insert("devit.tool_call".to_string(), "on_request".to_string());
+    m.insert("server.policy".to_string(), "never".to_string());
     m.insert("echo".to_string(), "never".to_string());
     Policies(m)
 }
@@ -515,7 +587,6 @@ enum RateLimitErr {
     TooManyCalls { limit: u32 },
     Cooldown { ms_left: u64 },
 }
-
 // -------- Audit helpers --------
 struct AuditOpts {
     audit_enabled: bool,
@@ -644,6 +715,64 @@ pub fn policy_dump_json(config_path: Option<&std::path::Path>) -> serde_json::Va
     })
 }
 
+// Build effective policy JSON (approvals, limits, audit)
+fn policy_effective_json(
+    audit: &AuditOpts,
+    policies: &Policies,
+    limits: &Limits,
+    server_version: &str,
+) -> serde_json::Value {
+    use serde_json::json;
+    use std::collections::BTreeMap;
+
+    fn pol_str(s: &str) -> &str {
+        s
+    }
+
+    let server = json!({
+        "name": "devit-mcpd",
+        "version": server_version,
+    });
+
+    let mut tools: BTreeMap<String, String> = BTreeMap::new();
+    for k in [
+        "devit.tool_list",
+        "devit.tool_call",
+        "plugin.invoke",
+        "server.policy",
+        "echo",
+    ] {
+        let eff = policies
+            .0
+            .get(k)
+            .cloned()
+            .unwrap_or_else(|| default_policy_for(k));
+        tools.insert(k.to_string(), pol_str(&eff).to_string());
+    }
+
+    let approvals = json!({
+        "default": policies.0.get("default").cloned().unwrap_or_else(|| "on_request".to_string()),
+        "tools": tools,
+    });
+
+    let limits = json!({
+        "max_calls_per_min": limits.max_calls_per_min,
+        "max_json_kb": limits.max_json_kb,
+        "cooldown_ms": limits.cooldown.as_millis(),
+    });
+
+    let audit = json!({
+        "enabled": audit.audit_enabled,
+        "path": audit.audit_path.display().to_string(),
+    });
+
+    json!({
+        "server": server,
+        "approvals": approvals,
+        "limits": limits,
+        "audit": audit,
+    })
+}
 fn run_devit_list(bin: &PathBuf, timeout: Duration) -> Result<Value> {
     let mut child = Command::new(bin)
         .arg("tool")

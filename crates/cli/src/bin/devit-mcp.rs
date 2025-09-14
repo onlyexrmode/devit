@@ -3,6 +3,7 @@
 //! Usage:
 //!   devit-mcp --cmd '<serveur MCP>' [--handshake-only]
 //!   devit-mcp --cmd '<serveur MCP>' --echo "hello"
+//!   devit-mcp --cmd '<serveur MCP>' --policy
 
 use clap::{ArgAction, Parser};
 use devit_cli_mcp as mcp_mod;
@@ -42,6 +43,10 @@ struct Cli {
     /// Dry-run: n'exécute pas la commande, affiche juste le plan
     #[arg(long, action = ArgAction::SetTrue)]
     dry_run: bool,
+
+    /// Affiche la politique serveur via MCP (server.policy)
+    #[arg(long, action = ArgAction::SetTrue)]
+    policy: bool,
 
     /// Timeout par message (secs). Par défaut: DEVIT_TIMEOUT_SECS ou 30
     #[arg(long = "timeout-secs")]
@@ -94,6 +99,12 @@ fn real_main() -> Result<()> {
     }))?;
 
     if cli.handshake_only {
+        return Ok(());
+    }
+
+    if cli.policy {
+        let v = client.tool_call("server.policy", serde_json::json!({}))?;
+        safe_print_json(&v)?;
         return Ok(());
     }
 
