@@ -13,6 +13,8 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{stdin, Read, Write as _};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+mod context;
 
 #[derive(Parser, Debug)]
 #[command(name = "devit", version, about = "DevIt CLI - patch-only agent", long_about = None)]
@@ -101,6 +103,18 @@ enum CtxCmd {
         /// Root path (default: .)
         #[arg(default_value = ".")]
         path: String,
+        /// Max bytes per file (default: 262144)
+        #[arg(long = "max-bytes-per-file")]
+        max_bytes_per_file: Option<usize>,
+        /// Max files to index (default: 5000)
+        #[arg(long = "max-files")]
+        max_files: Option<usize>,
+        /// Allowed extensions CSV (e.g., rs,toml,md)
+        #[arg(long = "ext-allow")]
+        ext_allow: Option<String>,
+        /// Output JSON path (default: .devit/index.json)
+        #[arg(long = "json-out")]
+        json_out: Option<PathBuf>,
     },
 }
 
@@ -329,8 +343,20 @@ async fn main() -> Result<()> {
             }
         },
         Some(Commands::Context { action }) => match action {
-            CtxCmd::Map { path } => {
-                let written = build_context_index(&path)?;
+            CtxCmd::Map {
+                path,
+                max_bytes_per_file,
+                max_files,
+                ext_allow,
+                json_out,
+            } => {
+                let written = build_context_index_adv(
+                    &path,
+                    max_bytes_per_file,
+                    max_files,
+                    ext_allow.as_deref(),
+                    json_out.as_deref(),
+                )?;
                 println!("index écrit: {}", written.display());
             }
         },
@@ -476,55 +502,47 @@ fn journal_event(ev: &Event) -> Result<()> {
     Ok(())
 }
 
-fn build_context_index(root: &str) -> Result<PathBuf> {
+fn build_context_index_adv(
+    root: &str,
+    max_bytes_per_file: Option<usize>,
+    max_files: Option<usize>,
+    ext_allow: Option<&str>,
+    json_out: Option<&Path>,
+) -> Result<PathBuf> {
     let dir = ensure_devit_dir()?;
-    let out = dir.join("index.json");
-    let mut files: Vec<String> = Vec::new();
-    // Prefer ripgrep if available
-    let rg_ok = std::process::Command::new("rg")
-        .arg("--version")
-        .output()
-        .is_ok();
-    if rg_ok {
-        let listing = std::process::Command::new("rg")
-            .current_dir(root)
-            .args(["--files"]) // respect .gitignore by default
-            .output()?;
-        let txt = String::from_utf8_lossy(&listing.stdout);
-        for line in txt.lines() {
-            if should_skip(line) {
-                continue;
+    let out = json_out
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| dir.join("index.json"));
+    // Timeout support
+    let timeout = std::env::var("DEVIT_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(Duration::from_secs);
+    let opts = crate::context::ContextOpts {
+        max_bytes_per_file: max_bytes_per_file.unwrap_or(262_144),
+        max_files: max_files.unwrap_or(5000),
+        ext_allow: ext_allow.map(|s| {
+            s.split(',')
+                .map(|x| x.trim().to_string())
+                .filter(|x| !x.is_empty())
+                .collect()
+        }),
+        timeout,
+        out_path: out.clone(),
+    };
+    match crate::context::generate_index(Path::new(root), &opts) {
+        Ok(w) => Ok(w),
+        Err(e) => {
+            if e.to_string().contains("timeout") {
+                eprintln!("error: context map timeout");
+                std::process::exit(124);
             }
-            files.push(line.to_string());
-        }
-    } else {
-        for ent in walkdir::WalkDir::new(root) {
-            let ent = ent?;
-            if ent.file_type().is_file() {
-                let p = ent.path().strip_prefix(root).unwrap_or(ent.path());
-                let s = p.to_string_lossy().to_string();
-                if should_skip(&s) {
-                    continue;
-                }
-                files.push(s);
-            }
+            Err(e)
         }
     }
-    files.sort();
-    let obj = serde_json::json!({
-        "root": root,
-        "count": files.len(),
-        "files": files,
-    });
-    let mut f = fs::File::create(&out)?;
-    writeln!(f, "{}", serde_json::to_string_pretty(&obj)?)?;
-    Ok(out)
 }
 
-fn should_skip(path: &str) -> bool {
-    let skip_prefixes = [".git/", "target/", ".devit/", "bench/"];
-    skip_prefixes.iter().any(|p| path.starts_with(p))
-}
+// legacy helper removed; scanning now handled in context module
 
 fn tool_call_json(
     cfg: &Config,
