@@ -48,7 +48,7 @@ struct InvokeArgs {
     #[arg(long)]
     manifest: Option<PathBuf>,
     /// Timeout en secondes (fallback DEVIT_TIMEOUT_SECS, sinon 30)
-    #[arg(long)]
+    #[arg(long = "timeout-secs")]
     timeout_secs: Option<u64>,
     /// Racine du registry (si --id)
     #[arg(long)]
@@ -95,7 +95,12 @@ fn do_invoke(a: InvokeArgs) -> Result<()> {
     let out = if let Some(manifest) = a.manifest {
         plugins::invoke_manifest(&manifest, buf.trim(), timeout)?
     } else if let Some(id) = a.id {
-        plugins::invoke_by_id(&id, buf.trim(), timeout, a.dir.as_deref().map(|p| p as &std::path::Path))?
+        plugins::invoke_by_id(
+            &id,
+            buf.trim(),
+            timeout,
+            a.dir.as_deref().map(|p| p as &std::path::Path),
+        )?
     } else {
         return Err(anyhow!("provide either --id <id> or --manifest <file>"));
     };

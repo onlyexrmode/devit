@@ -66,10 +66,10 @@ fn default_registry_dir() -> PathBuf {
 }
 
 pub fn load_manifest(path: &Path) -> Result<PluginManifest> {
-    let s = fs::read_to_string(path)
-        .with_context(|| format!("read manifest {}", path.display()))?;
-    let m: PluginManifest = toml::from_str(&s)
-        .with_context(|| format!("parse TOML {}", path.display()))?;
+    let s =
+        fs::read_to_string(path).with_context(|| format!("read manifest {}", path.display()))?;
+    let m: PluginManifest =
+        toml::from_str(&s).with_context(|| format!("parse TOML {}", path.display()))?;
     Ok(m)
 }
 
@@ -107,11 +107,22 @@ pub fn discover_plugins(root: Option<&Path>) -> Result<Vec<PluginInfo>> {
 }
 
 fn ensure_bin_exists<S: AsRef<OsStr>>(bin: S) -> Result<()> {
-    let which = if cfg!(target_os = "windows") { "where" } else { "which" };
-    let status = Command::new(which).arg(&bin).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    let which = if cfg!(target_os = "windows") {
+        "where"
+    } else {
+        "which"
+    };
+    let status = Command::new(which)
+        .arg(&bin)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
     match status {
         Ok(s) if s.success() => Ok(()),
-        _ => Err(anyhow!("required binary {:?} not found in PATH", bin.as_ref())),
+        _ => Err(anyhow!(
+            "required binary {:?} not found in PATH",
+            bin.as_ref()
+        )),
     }
 }
 
@@ -120,13 +131,20 @@ fn wasmtime_bin() -> String {
 }
 
 /// Invoque un plugin par manifeste, lit JSON depuis `stdin_json` et renvoie JSON stdout.
-pub fn invoke_manifest(manifest_path: &Path, stdin_json: &str, per_msg_timeout: Option<Duration>) -> Result<Value> {
+pub fn invoke_manifest(
+    manifest_path: &Path,
+    stdin_json: &str,
+    per_msg_timeout: Option<Duration>,
+) -> Result<Value> {
     let wbin = wasmtime_bin();
     ensure_bin_exists(&wbin)?;
 
     let manifest = load_manifest(manifest_path)?;
     // Résoudre le chemin du .wasm relativement au manifest
-    let wasm_path = manifest_path.parent().unwrap_or_else(|| Path::new(".")).join(&manifest.wasm);
+    let wasm_path = manifest_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(&manifest.wasm);
     if !wasm_path.exists() {
         return Err(anyhow!("wasm file not found: {}", wasm_path.display()));
     }
@@ -144,22 +162,33 @@ pub fn invoke_manifest(manifest_path: &Path, stdin_json: &str, per_msg_timeout: 
         cmd.arg(format!("--env={kv}"));
     }
     cmd.arg(wasm_path.as_os_str());
-    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
 
     let mut child = cmd.spawn().with_context(|| "spawn wasmtime failed")?;
     // Feed JSON to stdin
     {
-        let mut sin = child.stdin.take().ok_or_else(|| anyhow!("child stdin missing"))?;
+        let mut sin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("child stdin missing"))?;
         sin.write_all(stdin_json.as_bytes())?;
         sin.flush()?;
         drop(sin);
     }
     // Read stdout with timeout
-    let mut sout = child.stdout.take().ok_or_else(|| anyhow!("child stdout missing"))?;
+    let mut sout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("child stdout missing"))?;
     let (tx, rx) = mpsc::sync_channel::<Result<String>>(1);
     thread::spawn(move || {
         let mut buf = String::new();
-        let res = sout.read_to_string(&mut buf).map_err(|e| anyhow!(e)).map(|_| buf);
+        let res = sout
+            .read_to_string(&mut buf)
+            .map_err(|e| anyhow!(e))
+            .map(|_| buf);
         let _ = tx.send(res);
     });
     match rx.recv_timeout(timeout) {
@@ -170,7 +199,8 @@ pub fn invoke_manifest(manifest_path: &Path, stdin_json: &str, per_msg_timeout: 
                 .lines()
                 .find(|l| l.trim_start().starts_with('{') || l.trim_start().starts_with('['))
                 .ok_or_else(|| anyhow!("no JSON found on plugin stdout"))?;
-            let v: Value = serde_json::from_str(first_json).with_context(|| format!("invalid JSON: {first_json}"))?;
+            let v: Value = serde_json::from_str(first_json)
+                .with_context(|| format!("invalid JSON: {first_json}"))?;
             Ok(v)
         }
         Err(_timeout) => {
@@ -182,11 +212,20 @@ pub fn invoke_manifest(manifest_path: &Path, stdin_json: &str, per_msg_timeout: 
 }
 
 /// Résout un plugin par ID dans le registry (DEVIT_PLUGINS_DIR) et l'invoque.
-pub fn invoke_by_id(id: &str, stdin_json: &str, per_msg_timeout: Option<Duration>, root: Option<&Path>) -> Result<Value> {
+pub fn invoke_by_id(
+    id: &str,
+    stdin_json: &str,
+    per_msg_timeout: Option<Duration>,
+    root: Option<&Path>,
+) -> Result<Value> {
     let root = root.map(PathBuf::from).unwrap_or_else(default_registry_dir);
     let manifest = root.join(id).join("devit-plugin.toml");
     if !manifest.exists() {
-        return Err(anyhow!("plugin id {:?} not found at {}", id, manifest.display()));
+        return Err(anyhow!(
+            "plugin id {:?} not found at {}",
+            id,
+            manifest.display()
+        ));
     }
     invoke_manifest(&manifest, stdin_json, per_msg_timeout)
 }

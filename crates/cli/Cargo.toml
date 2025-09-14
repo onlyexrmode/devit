@@ -23,6 +23,11 @@ name = "devit-mcp"
 path = "src/bin/devit-mcp.rs"
 required-features = ["experimental"]
 
+# Binaire MCP server (stdio) — expérimental
+[[bin]]
+name = "devit-mcpd"
+path = "src/bin/devit-mcpd.rs"
+required-features = ["experimental"]
 # Binaire expérimental Plugins WASM/WASI
 [[bin]]
 name = "devit-plugin"

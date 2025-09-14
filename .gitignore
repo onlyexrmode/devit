@@ -13,3 +13,5 @@ bench/patch_diff_vide.patch
 bench/patch-devit-bin.diff
 bench/ROADMAP.md
 bench/NOTES.md
+.prompt_ne_pach_commit_gitignore_me
+examples/plugins/**/target/

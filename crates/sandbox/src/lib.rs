@@ -25,9 +25,9 @@ fn first_word(s: &str) -> &str {
 fn allowed_binaries() -> &'static [&'static str] {
     // Conservative default allow-list for read/inspect operations
     &[
-        "true", "false", "printf", "echo", "cat", "ls", "stat", "head", "tail", "wc",
-        "cut", "sort", "uniq", "tr", "sed", "awk", "grep", "rg", "find", "xargs",
-        "dirname", "basename", "pwd",
+        "true", "false", "printf", "echo", "cat", "ls", "stat", "head", "tail", "wc", "cut",
+        "sort", "uniq", "tr", "sed", "awk", "grep", "rg", "find", "xargs", "dirname", "basename",
+        "pwd",
     ]
 }
 
@@ -42,12 +42,12 @@ fn enforce_policy(cmd: &str, policy: &PolicyCfg, sb: &SandboxCfg) -> Result<()> 
     for p in parts {
         let bin = first_word(&p);
         if !allow.contains(&bin) {
-            return Err(anyhow!(format!(
-                "sandbox: binaire non autorisé: {bin}")));
+            return Err(anyhow!(format!("sandbox: binaire non autorisé: {bin}")));
         }
         if sb.net.eq_ignore_ascii_case("off") && netblk.contains(&bin) {
             return Err(anyhow!(format!(
-                "sandbox: réseau interdit, commande bloquée: {bin}")));
+                "sandbox: réseau interdit, commande bloquée: {bin}"
+            )));
         }
     }
     // Approval profile may further restrict execution later at CLI layer
@@ -93,7 +93,11 @@ pub fn run_shell_sandboxed(cmd: &str, policy: &PolicyCfg, sb: &SandboxCfg) -> Re
     Ok(status.code().unwrap_or(-1))
 }
 
-pub fn run_shell_sandboxed_capture(cmd: &str, policy: &PolicyCfg, sb: &SandboxCfg) -> Result<(i32, String)> {
+pub fn run_shell_sandboxed_capture(
+    cmd: &str,
+    policy: &PolicyCfg,
+    sb: &SandboxCfg,
+) -> Result<(i32, String)> {
     enforce_policy(cmd, policy, sb)?;
     let mut command = if cfg!(target_os = "windows") {
         let mut c = Command::new("cmd");

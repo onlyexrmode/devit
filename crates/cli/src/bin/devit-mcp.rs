@@ -36,7 +36,7 @@ struct Cli {
     dry_run: bool,
 
     /// Timeout par message (secs). Par défaut: DEVIT_TIMEOUT_SECS ou 30
-    #[arg(long)]
+    #[arg(long = "timeout-secs")]
     timeout_secs: Option<u64>,
 
     /// Version client à annoncer
@@ -64,7 +64,7 @@ fn real_main() -> Result<()> {
 
     if cli.dry_run {
         println!(
-            "{{\"dry_run\":true,\"cmd\":{cmd},\"timeout_secs\":{t},\
+            "{{\"dry_run\":true,\"cmd\":{cmd},\"timeout-secs\":{t},\
              \"handshake_only\":{h},\"echo\":{echo}}}",
             cmd = serde_json::to_string(&cli.cmd)?,
             t = timeout.as_secs(),
@@ -93,9 +93,7 @@ fn real_main() -> Result<()> {
     }
 
     if let Some(text) = cli.echo.as_deref() {
-        let r = client
-            .tool_echo(text)
-            .with_context(|| "echo call failed")?;
+        let r = client.tool_echo(text).with_context(|| "echo call failed")?;
         println!("{}", serde_json::to_string(&r)?);
         return Ok(());
     }

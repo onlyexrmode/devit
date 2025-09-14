@@ -56,8 +56,15 @@ fn shell_exec_json_outputs() {
     let resp: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(resp.get("ok").and_then(|v| v.as_bool()).unwrap_or(false));
     let res = resp.get("result").cloned().unwrap_or(serde_json::json!({}));
-    assert_eq!(res.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(-1), 0);
-    let out_txt = res.get("output").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    assert_eq!(
+        res.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(-1),
+        0
+    );
+    let out_txt = res
+        .get("output")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     assert!(out_txt.contains("HELLO"));
 }
 
@@ -67,10 +74,38 @@ fn fs_patch_apply_check_only_succeeds() {
     write_cfg(&d, "never");
 
     // init repo
-    assert!(Command::new("git").current_dir(&d).args(["init"]).status().unwrap().success());
+    assert!(Command::new("git")
+        .current_dir(&d)
+        .args(["init"])
+        .status()
+        .unwrap()
+        .success());
+    // Configure local identity for CI environments lacking global config
+    assert!(Command::new("git")
+        .current_dir(&d)
+        .args(["config", "user.email", "ci@example.invalid"])
+        .status()
+        .unwrap()
+        .success());
+    assert!(Command::new("git")
+        .current_dir(&d)
+        .args(["config", "user.name", "CI Runner"])
+        .status()
+        .unwrap()
+        .success());
     fs::write(d.join("f.txt"), "one\n").unwrap();
-    assert!(Command::new("git").current_dir(&d).args(["add", "."]).status().unwrap().success());
-    assert!(Command::new("git").current_dir(&d).args(["commit", "-m", "init"]).status().unwrap().success());
+    assert!(Command::new("git")
+        .current_dir(&d)
+        .args(["add", "."])
+        .status()
+        .unwrap()
+        .success());
+    assert!(Command::new("git")
+        .current_dir(&d)
+        .args(["commit", "-m", "init"])
+        .status()
+        .unwrap()
+        .success());
 
     // prepare a minimal unified diff (add a line)
     let diff_txt = "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1,2 @@\n one\n+two\n".to_string();
@@ -102,5 +137,8 @@ fn fs_patch_apply_check_only_succeeds() {
     let resp: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(resp.get("ok").and_then(|v| v.as_bool()).unwrap_or(false));
     let res = resp.get("result").cloned().unwrap_or(serde_json::json!({}));
-    assert!(res.get("checked").and_then(|v| v.as_bool()).unwrap_or(false));
+    assert!(res
+        .get("checked")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false));
 }

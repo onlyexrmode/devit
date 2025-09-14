@@ -58,9 +58,24 @@ impl McpClient {
             .spawn()
             .with_context(|| format!("spawn failed for: {cmd}"))?;
 
-        let stdin = BufWriter::new(child.stdin.take().ok_or_else(|| anyhow!("child stdin missing"))?);
-        let stdout = BufReader::new(child.stdout.take().ok_or_else(|| anyhow!("child stdout missing"))?);
-        Ok(Self { child, stdin, stdout, per_msg_timeout })
+        let stdin = BufWriter::new(
+            child
+                .stdin
+                .take()
+                .ok_or_else(|| anyhow!("child stdin missing"))?,
+        );
+        let stdout = BufReader::new(
+            child
+                .stdout
+                .take()
+                .ok_or_else(|| anyhow!("child stdout missing"))?,
+        );
+        Ok(Self {
+            child,
+            stdin,
+            stdout,
+            per_msg_timeout,
+        })
     }
 
     pub fn handshake(&mut self, client_version: &str) -> Result<Capabilities> {
@@ -129,15 +144,18 @@ impl McpClient {
                 Ok(res) => res?,
                 Err(_e) => return Err(TimeoutErr.into()),
             };
-            let v: Value = serde_json::from_str(&line)
-                .with_context(|| format!("invalid json: {line}"))?;
+            let v: Value =
+                serde_json::from_str(&line).with_context(|| format!("invalid json: {line}"))?;
             Ok(v)
         })
     }
 }
 
 fn ensure_type(v: &Value, expected: &str) -> Result<()> {
-    let t = v.get("type").and_then(|x| x.as_str()).ok_or_else(|| anyhow!("missing type"))?;
+    let t = v
+        .get("type")
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| anyhow!("missing type"))?;
     if t != expected {
         Err(anyhow!("unexpected type: {t}, want {expected}"))
     } else {
@@ -163,7 +181,11 @@ mod tests {
                 .map(|s| format!("{s}\n"))
                 .collect::<String>()
                 .into_bytes();
-            Self { out: BufReader::new(Cursor::new(joined)), inp: Vec::new(), timeout: Duration::from_millis(200) }
+            Self {
+                out: BufReader::new(Cursor::new(joined)),
+                inp: Vec::new(),
+                timeout: Duration::from_millis(200),
+            }
         }
 
         fn read_json_line_timeout(&mut self) -> Result<Value> {
@@ -227,7 +249,8 @@ mod tests {
         fake.write_json(&json!({"type":"ping"})).unwrap();
         let pong = fake.read_json_line_timeout().unwrap();
         ensure_type(&pong, "pong").unwrap();
-        fake.write_json(&json!({"type":"version","payload":{"client":"x"}})).unwrap();
+        fake.write_json(&json!({"type":"version","payload":{"client":"x"}}))
+            .unwrap();
         let ver = fake.read_json_line_timeout().unwrap();
         ensure_type(&ver, "version").unwrap();
         fake.write_json(&json!({"type":"capabilities"})).unwrap();
