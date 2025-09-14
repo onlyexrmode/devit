@@ -51,6 +51,12 @@ struct Cli {
     /// Affiche la politique serveur via MCP (server.policy)
     #[arg(long, action = ArgAction::SetTrue)]
     policy: bool,
+    /// Affiche la santé serveur via MCP (server.health)
+    #[arg(long, action = ArgAction::SetTrue)]
+    health: bool,
+    /// Affiche les stats serveur via MCP (server.stats)
+    #[arg(long, action = ArgAction::SetTrue)]
+    stats: bool,
 
     /// Timeout par message (secs). Par défaut: DEVIT_TIMEOUT_SECS ou 30
     #[arg(long = "timeout-secs")]
@@ -108,6 +114,18 @@ fn real_main() -> Result<()> {
 
     if cli.policy {
         let v = client.tool_call("server.policy", serde_json::json!({}))?;
+        safe_print_json(&v)?;
+        return Ok(());
+    }
+
+    if cli.health {
+        let v = client.tool_call("server.health", serde_json::json!({}))?;
+        safe_print_json(&v)?;
+        return Ok(());
+    }
+
+    if cli.stats {
+        let v = client.tool_call("server.stats", serde_json::json!({}))?;
         safe_print_json(&v)?;
         return Ok(());
     }

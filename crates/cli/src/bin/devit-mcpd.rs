@@ -74,6 +74,7 @@ fn real_main() -> Result<()> {
         hmac_key_path: cli.hmac_key.clone(),
         auto_yes: cli.yes,
     };
+    let mut state = ServerState::new();
 
     // --policy-dump: print effective approvals JSON and exit
     if cli.policy_dump {
@@ -123,6 +124,8 @@ fn real_main() -> Result<()> {
                     json!({"type":"capabilities","payload":{"tools":[
                         "devit.tool_list",
                         "devit.tool_call",
+                        "server.health",
+                        "server.stats",
                         "server.policy",
                         "echo"
                     ]}})
@@ -156,6 +159,69 @@ fn real_main() -> Result<()> {
                     continue;
                 }
                 match name {
+                    "server.health" => {
+                        let tool_key = "server.health";
+                        state.bump_call(tool_key);
+                        let now = Instant::now();
+                        if let Err(e) = rl.allow(tool_key, now) {
+                            audit_pre(&audit, tool_key, "rate-limit");
+                            let v = match e {
+                                RateLimitErr::TooManyCalls { limit } => {
+                                    json!({"type":"tool.error","payload":{ "name": tool_key, "rate_limited": true, "reason": "too_many_calls", "limit_per_min": limit }})
+                                }
+                                RateLimitErr::Cooldown { ms_left } => {
+                                    json!({"type":"tool.error","payload":{ "name": tool_key, "rate_limited": true, "reason": "cooldown", "cooldown_ms": ms_left }})
+                                }
+                            };
+                            writeln!(stdout, "{}", v)?;
+                            continue;
+                        }
+                        let start = Instant::now();
+                        let v = health_json(
+                            &audit,
+                            &policies,
+                            &rl.limits,
+                            &state,
+                            &cli.server_version,
+                            cli.devit_bin.as_deref(),
+                        );
+                        let dur = start.elapsed().as_millis();
+                        audit_done(&audit, tool_key, true, dur, None);
+                        state.bump_ok(tool_key);
+                        writeln!(
+                            stdout,
+                            "{}",
+                            json!({"type":"tool.result","payload":{"ok":true,"name": tool_key, "health": v}})
+                        )?;
+                    }
+                    "server.stats" => {
+                        let tool_key = "server.stats";
+                        state.bump_call(tool_key);
+                        let now = Instant::now();
+                        if let Err(e) = rl.allow(tool_key, now) {
+                            audit_pre(&audit, tool_key, "rate-limit");
+                            let v = match e {
+                                RateLimitErr::TooManyCalls { limit } => {
+                                    json!({"type":"tool.error","payload":{ "name": tool_key, "rate_limited": true, "reason": "too_many_calls", "limit_per_min": limit }})
+                                }
+                                RateLimitErr::Cooldown { ms_left } => {
+                                    json!({"type":"tool.error","payload":{ "name": tool_key, "rate_limited": true, "reason": "cooldown", "cooldown_ms": ms_left }})
+                                }
+                            };
+                            writeln!(stdout, "{}", v)?;
+                            continue;
+                        }
+                        let start = Instant::now();
+                        let v = stats_json(&state);
+                        let dur = start.elapsed().as_millis();
+                        audit_done(&audit, tool_key, true, dur, None);
+                        state.bump_ok(tool_key);
+                        writeln!(
+                            stdout,
+                            "{}",
+                            json!({"type":"tool.result","payload":{"ok":true,"name": tool_key, "stats": v}})
+                        )?;
+                    }
                     "server.policy" => {
                         let pol = policies
                             .0
@@ -431,6 +497,8 @@ fn default_policies() -> Policies {
     m.insert("devit.tool_list".to_string(), "never".to_string());
     m.insert("devit.tool_call".to_string(), "on_request".to_string());
     m.insert("server.policy".to_string(), "never".to_string());
+    m.insert("server.health".to_string(), "never".to_string());
+    m.insert("server.stats".to_string(), "never".to_string());
     m.insert("echo".to_string(), "never".to_string());
     Policies(m)
 }
@@ -681,6 +749,125 @@ fn policy_effective_json(
         "approvals": approvals,
         "limits": limits,
         "audit": audit,
+    })
+}
+
+// -------- Server State / Health / Stats --------
+struct ServerState {
+    start: Instant,
+    per_key_calls: HashMap<String, u64>,
+    per_key_ok: HashMap<String, u64>,
+    per_key_err: HashMap<String, u64>,
+    total_calls: u64,
+    total_ok: u64,
+    total_err: u64,
+}
+
+impl ServerState {
+    fn new() -> Self {
+        Self {
+            start: Instant::now(),
+            per_key_calls: HashMap::new(),
+            per_key_ok: HashMap::new(),
+            per_key_err: HashMap::new(),
+            total_calls: 0,
+            total_ok: 0,
+            total_err: 0,
+        }
+    }
+    fn bump_call(&mut self, key: &str) {
+        self.total_calls += 1;
+        *self.per_key_calls.entry(key.to_string()).or_insert(0) += 1;
+    }
+    fn bump_ok(&mut self, key: &str) {
+        self.total_ok += 1;
+        *self.per_key_ok.entry(key.to_string()).or_insert(0) += 1;
+    }
+    fn bump_err(&mut self, key: &str) {
+        self.total_err += 1;
+        *self.per_key_err.entry(key.to_string()).or_insert(0) += 1;
+    }
+}
+
+fn which(bin: &str) -> Option<String> {
+    let probe = if cfg!(target_os = "windows") {
+        "where"
+    } else {
+        "which"
+    };
+    let out = std::process::Command::new(probe).arg(bin).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .next()?
+        .trim()
+        .to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+fn health_json(
+    audit: &AuditOpts,
+    policies: &Policies,
+    limits: &Limits,
+    state: &ServerState,
+    server_version: &str,
+    devit_bin: Option<&Path>,
+) -> serde_json::Value {
+    let uptime_ms = state.start.elapsed().as_millis() as u64;
+    let devit = if let Some(p) = devit_bin {
+        Some(p.display().to_string())
+    } else {
+        which("devit")
+    };
+    let devit = devit
+        .map(|p| json!({"found": true, "path": p}))
+        .unwrap_or(json!({"found": false}));
+    let devit_plugin = which("devit-plugin")
+        .map(|p| json!({"found": true, "path": p}))
+        .unwrap_or(json!({"found": false}));
+    let wasmtime = which("wasmtime")
+        .map(|p| json!({"found": true, "path": p}))
+        .unwrap_or(json!({"found": false}));
+    json!({
+        "ok": true,
+        "server": { "name": "devit-mcpd", "version": server_version },
+        "uptime_ms": uptime_ms,
+        "bins": { "devit": devit, "devit_plugin": devit_plugin, "wasmtime": wasmtime },
+        "limits": {
+            "max_calls_per_min": limits.max_calls_per_min,
+            "max_json_kb": limits.max_json_kb,
+            "cooldown_ms": limits.cooldown.as_millis()
+        },
+        "audit": { "enabled": audit.audit_enabled, "path": audit.audit_path.display().to_string() }
+    })
+}
+
+fn stats_json(state: &ServerState) -> serde_json::Value {
+    use std::collections::{BTreeMap, HashSet};
+    let mut per_tool: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+    let keys: HashSet<String> = state
+        .per_key_calls
+        .keys()
+        .chain(state.per_key_ok.keys())
+        .chain(state.per_key_err.keys())
+        .cloned()
+        .collect();
+    for key in keys {
+        let calls = *state.per_key_calls.get(&key).unwrap_or(&0);
+        let ok = *state.per_key_ok.get(&key).unwrap_or(&0);
+        let err = *state.per_key_err.get(&key).unwrap_or(&0);
+        per_tool.insert(key, json!({"calls":calls,"ok":ok,"errors":err}));
+    }
+    json!({
+        "ok": true,
+        "totals": { "calls": state.total_calls, "ok": state.total_ok, "errors": state.total_err },
+        "per_tool": per_tool
     })
 }
 fn run_devit_list(bin: &PathBuf, timeout: Duration) -> Result<Value> {
