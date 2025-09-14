@@ -22,6 +22,27 @@ v0.2‑rc highlights (Confiance & interop)
 - Experimental (feature-gated): `devit-mcp` (MCP stdio client). Build/run with:
   - `cargo run -p devit-cli --features experimental --bin devit-mcp -- --help`
 
+Plugins (WASM/WASI)
+- Experimental, feature-gated. Run with `--features experimental`.
+- Registry: `.devit/plugins/<id>/devit-plugin.toml` (or `DEVIT_PLUGINS_DIR`).
+- Manifest example (`devit-plugin.toml`):
+  - `id = "echo_sum"`
+  - `name = "Echo Sum"`
+  - `wasm = "echo_sum.wasm"`
+  - `version = "0.1.0"`
+  - `allowed_dirs = []` (optional preopened dirs)
+  - `env = []` (optional `KEY=VALUE` entries)
+- Build example plugin:
+  - `rustup target add wasm32-wasi`
+  - `cargo build -p devit-plugin-echo-sum --target wasm32-wasi --release` (from `examples/plugins/echo_sum`)
+  - Copy to registry: `mkdir -p .devit/plugins/echo_sum && cp target/wasm32-wasi/release/echo_sum.wasm .devit/plugins/echo_sum/`
+  - Write manifest per above.
+- CLI usage (JSON I/O):
+  - List: `cargo run -p devit-cli --features experimental --bin devit-plugin -- list`
+  - Invoke by id: `echo '{"a":1,"b":2}' | cargo run -p devit-cli --features experimental --bin devit-plugin -- invoke --id echo_sum`
+  - Or by manifest: `echo '{"a":1,"b":2}' | cargo run -p devit-cli --features experimental --bin devit-plugin -- invoke --manifest .devit/plugins/echo_sum/devit-plugin.toml`
+  - Timeouts: `DEVIT_TIMEOUT_SECS` (default 30s). Timeout exit code: 124.
+
 English (EN)
 - Quickstart
   - Start a local OpenAI‑compatible LLM (LM Studio endpoint, or Ollama /v1).
@@ -112,6 +133,23 @@ Français (FR)
   - Expérimental: `devit-mcp` (client MCP stdio)
     - `cargo run -p devit-cli --features experimental --bin devit-mcp -- --cmd '<serveur MCP>' --handshake-only`
     - `cargo run -p devit-cli --features experimental --bin devit-mcp -- --cmd '<serveur MCP>' --echo "hello"`
+
+Plugins (WASM/WASI)
+- Expérimental (feature-gated). Utiliser `--features experimental`.
+- Registry: `.devit/plugins/<id>/devit-plugin.toml` (ou `DEVIT_PLUGINS_DIR`).
+- Exemple de manifeste (`devit-plugin.toml`) :
+  - `id = "echo_sum"`, `name = "Echo Sum"`, `wasm = "echo_sum.wasm"`, `version = "0.1.0"`
+  - `allowed_dirs = []` (répertoires pré-ouverts facultatifs), `env = []` (variables `KEY=VALUE`).
+- Construire l’exemple:
+  - `rustup target add wasm32-wasi`
+  - `cargo build -p devit-plugin-echo-sum --target wasm32-wasi --release` (depuis `examples/plugins/echo_sum`)
+  - Copier: `mkdir -p .devit/plugins/echo_sum && cp target/wasm32-wasi/release/echo_sum.wasm .devit/plugins/echo_sum/`
+  - Écrire le manifeste comme ci-dessus.
+- CLI (I/O JSON):
+  - Lister: `cargo run -p devit-cli --features experimental --bin devit-plugin -- list`
+  - Invoquer par id: `echo '{"a":1,"b":2}' | cargo run -p devit-cli --features experimental --bin devit-plugin -- invoke --id echo_sum`
+  - Ou par manifeste: `echo '{"a":1,"b":2}' | cargo run -p devit-cli --features experimental --bin devit-plugin -- invoke --manifest .devit/plugins/echo_sum/devit-plugin.toml`
+  - Timeout: `DEVIT_TIMEOUT_SECS` (défaut 30s). Code sortie timeout: 124.
   - `devit plan` → liste `update_plan.yaml`
   - `devit watch [--diff PATCH.diff]` → TUI continu (Plan | Diff | Logs)
 - Policies d’approbation
