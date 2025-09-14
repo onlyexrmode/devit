@@ -14,7 +14,8 @@ use serde_json::{json, Value};
 use sha2::Sha256;
 use std::collections::VecDeque;
 use std::io::{self, BufRead, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -127,6 +128,7 @@ fn real_main() -> Result<()> {
                     json!({"type":"capabilities","payload":{"tools":[
                         "devit.tool_list",
                         "devit.tool_call",
+                        "server.context_head",
                         "server.health",
                         "server.stats",
                         "server.policy",
@@ -143,8 +145,10 @@ fn real_main() -> Result<()> {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("missing tool name"))?;
                 // Dry-run guard: only server.* tools allowed
-                let is_server_tool =
-                    name == "server.policy" || name == "server.health" || name == "server.stats";
+                let is_server_tool = name == "server.policy"
+                    || name == "server.health"
+                    || name == "server.stats"
+                    || name == "server.context_head";
                 if cli.dry_run && !is_server_tool {
                     let tool_key = name;
                     audit_pre(&audit, tool_key, "dry-run-deny");
@@ -182,6 +186,69 @@ fn real_main() -> Result<()> {
                     continue;
                 }
                 match name {
+                    "server.context_head" => {
+                        let tool_key = "server.context_head";
+                        state.bump_call(tool_key);
+                        // approvals already handled above (pre-deny) if any
+                        // ratelimit
+                        let now = Instant::now();
+                        if let Err(e) = rl.allow(tool_key, now) {
+                            audit_pre(&audit, tool_key, "rate-limit");
+                            let v = match e {
+                                RateLimitErr::TooManyCalls { limit } => json!({
+                                    "type":"tool.error","payload":{
+                                        "name": tool_key,
+                                        "rate_limited": true,
+                                        "reason": "too_many_calls",
+                                        "limit_per_min": limit
+                                    }
+                                }),
+                                RateLimitErr::Cooldown { ms_left } => json!({
+                                    "type":"tool.error","payload":{
+                                        "name": tool_key,
+                                        "rate_limited": true,
+                                        "reason": "cooldown",
+                                        "cooldown_ms": ms_left
+                                    }
+                                }),
+                            };
+                            writeln!(stdout, "{}", v)?;
+                            continue;
+                        }
+                        let args_json = payload.get("args").cloned().unwrap_or(json!({}));
+                        let limit = args_json
+                            .get("limit")
+                            .and_then(|x| x.as_u64())
+                            .unwrap_or(50)
+                            .clamp(1, 1000) as usize;
+                        let ext_allow =
+                            args_json
+                                .get("ext_allow")
+                                .and_then(|x| x.as_array())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                        .collect::<Vec<String>>()
+                                });
+                        let index_path = args_json
+                            .get("index_path")
+                            .and_then(|x| x.as_str())
+                            .map(|s| std::path::Path::new(s).to_path_buf());
+                        let start = Instant::now();
+                        let v =
+                            context_head_json(index_path.as_deref(), limit, ext_allow.as_deref());
+                        let dur = start.elapsed().as_millis();
+                        audit_done(&audit, tool_key, true, dur, None);
+                        state.bump_ok(tool_key);
+                        writeln!(
+                            stdout,
+                            "{}",
+                            json!({
+                                "type": "tool.result",
+                                "payload": {"ok": true, "name": tool_key, "head": v}
+                            })
+                        )?;
+                    }
                     "server.health" => {
                         let tool_key = "server.health";
                         state.bump_call(tool_key);
@@ -520,6 +587,7 @@ fn default_policies() -> Policies {
     m.insert("devit.tool_list".to_string(), "never".to_string());
     m.insert("devit.tool_call".to_string(), "on_request".to_string());
     m.insert("server.policy".to_string(), "never".to_string());
+    m.insert("server.context_head".to_string(), "never".to_string());
     m.insert("server.health".to_string(), "never".to_string());
     m.insert("server.stats".to_string(), "never".to_string());
     m.insert("echo".to_string(), "never".to_string());
@@ -892,6 +960,119 @@ fn stats_json(state: &ServerState) -> serde_json::Value {
         "totals": { "calls": state.total_calls, "ok": state.total_ok, "errors": state.total_err },
         "per_tool": per_tool
     })
+}
+
+fn context_head_json(
+    index_path_opt: Option<&std::path::Path>,
+    limit: usize,
+    ext_allow: Option<&[String]>,
+) -> serde_json::Value {
+    use serde_json::json;
+    let path = index_path_opt
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from(".devit/index.json"));
+    let data = match fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(_) => {
+            return json!({
+                "ok": false,
+                "not_indexed": true,
+                "path": path.display().to_string(),
+                "hint": "run: devit context map .",
+            })
+        }
+    };
+    let v: serde_json::Value = match serde_json::from_str(&data) {
+        Ok(v) => v,
+        Err(e) => {
+            return json!({
+                "ok": false,
+                "parse_error": e.to_string(),
+                "path": path.display().to_string()
+            })
+        }
+    };
+    let files = match v.get("files").and_then(|x| x.as_array()) {
+        Some(a) => a,
+        None => {
+            return json!({
+                "ok": false,
+                "invalid_index": true,
+                "path": path.display().to_string()
+            })
+        }
+    };
+    let mut rows: Vec<(i64, serde_json::Value)> = Vec::with_capacity(files.len());
+    'outer: for f in files {
+        let p = f.get("path").and_then(|x| x.as_str()).unwrap_or("");
+        let score = f.get("score").and_then(|x| x.as_i64()).unwrap_or(0);
+        if let Some(exts) = ext_allow {
+            let allowed = exts.iter().any(|e| p.ends_with(&format!(".{}", e)));
+            if !allowed {
+                continue 'outer;
+            }
+        }
+        rows.push((score, f.clone()));
+    }
+    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    let take = rows
+        .into_iter()
+        .take(limit)
+        .map(|(_s, f)| {
+            let path = f.get("path").cloned().unwrap_or(json!(""));
+            let score = f.get("score").cloned().unwrap_or(json!(0));
+            let lang = f.get("lang").cloned().unwrap_or(json!(null));
+            let size = f.get("size").cloned().unwrap_or(json!(null));
+            let symbols_count = f.get("symbols_count").cloned();
+            let mut m = serde_json::Map::new();
+            m.insert("path".to_string(), path);
+            m.insert("score".to_string(), score);
+            m.insert("lang".to_string(), lang);
+            m.insert("size".to_string(), size);
+            if let Some(sc) = symbols_count {
+                m.insert("symbols_count".to_string(), sc);
+            }
+            serde_json::Value::Object(m)
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "ok": true,
+        "source": {
+            "path": path.display().to_string(),
+            "generated_at": v.get("generated_at").cloned().unwrap_or(json!(null)),
+            "root": v.get("root").cloned().unwrap_or(json!(null))
+        },
+        "total": files.len(),
+        "limit": limit,
+        "items": take
+    })
+}
+
+#[cfg(test)]
+mod ctx_tests {
+    use super::*;
+    use std::io::Write as _;
+    #[test]
+    fn context_head_reads_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let devit_dir = dir.path().join(".devit");
+        fs::create_dir_all(&devit_dir).unwrap();
+        let idx = devit_dir.join("index.json");
+        let mut f = fs::File::create(&idx).unwrap();
+        write!(
+            f,
+            "{}",
+            r#"{"root": ".", "generated_at":"2025-09-14T00:00:00Z","files":[
+            {"path":"src/lib.rs","size":100,"lang":"rust","score":90,"symbols_count":5},
+            {"path":"README.md","size":200,"lang":"text","score":10}
+        ]}"#
+        )
+        .unwrap();
+        let v = context_head_json(Some(&idx), 1, None);
+        assert!(v["ok"].as_bool().unwrap_or(false));
+        assert_eq!(v["items"].as_array().unwrap().len(), 1);
+        assert_eq!(v["items"][0]["path"].as_str().unwrap(), "src/lib.rs");
+    }
 }
 fn run_devit_list(bin: &PathBuf, timeout: Duration) -> Result<Value> {
     let mut child = Command::new(bin)

@@ -7,6 +7,7 @@
 //! devit-mcp --cmd '<serveur MCP>' --policy
 //! devit-mcp --cmd '<serveur MCP>' --health
 //! devit-mcp --cmd '<serveur MCP>' --stats
+//! devit-mcp --cmd '<serveur MCP>' --context-head --head-limit 100 --head-ext rs,toml
 //!   devit-mcp --cmd '<serveur MCP>' --policy
 
 use clap::{ArgAction, Parser};
@@ -57,6 +58,15 @@ struct Cli {
     /// Affiche les stats serveur via MCP (server.stats)
     #[arg(long, action = ArgAction::SetTrue)]
     stats: bool,
+    /// Top-N chemins depuis .devit/index.json via MCP (server.context_head)
+    #[arg(long, action = ArgAction::SetTrue)]
+    context_head: bool,
+    /// Limite pour --context-head
+    #[arg(long = "head-limit", default_value_t = 50)]
+    head_limit: u64,
+    /// Extensions CSV pour --context-head (ex: rs,toml)
+    #[arg(long = "head-ext", default_value = "")]
+    head_ext: String,
 
     /// Timeout par message (secs). Par défaut: DEVIT_TIMEOUT_SECS ou 30
     #[arg(long = "timeout-secs")]
@@ -126,6 +136,28 @@ fn real_main() -> Result<()> {
 
     if cli.stats {
         let v = client.tool_call("server.stats", serde_json::json!({}))?;
+        safe_print_json(&v)?;
+        return Ok(());
+    }
+
+    if cli.context_head {
+        let ext = if cli.head_ext.trim().is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::Value::Array(
+                cli.head_ext
+                    .split(',')
+                    .filter(|s| !s.trim().is_empty())
+                    .map(|s| serde_json::Value::String(s.trim().to_string()))
+                    .collect(),
+            )
+        };
+        let args = if ext.is_null() {
+            serde_json::json!({"limit": cli.head_limit})
+        } else {
+            serde_json::json!({"limit": cli.head_limit, "ext_allow": ext})
+        };
+        let v = client.tool_call("server.context_head", args)?;
         safe_print_json(&v)?;
         return Ok(());
     }
