@@ -118,8 +118,8 @@ ci: verify
 
 # Lint flags (kebab-case only + expected flags present)
 lint-flags:
-	@rg --hidden --glob '!target' -- '--[a-z]+_[a-z]+' || echo 'OK: aucun flag snake_case'
-	@rg --hidden --glob '!target' -- '--timeout-secs|--policy-dump|--no-audit|--max-calls-per-min|--max-json-kb|--cooldown-ms|--context-head|--head-limit|--head-ext' >/dev/null || (echo 'WARN: flags attendus manquants'; exit 1)
+	@rg --hidden --glob '!target' --glob '!.prompt_ignore_me' -- '--[a-z]+_[a-z]+' || echo 'OK: aucun flag snake_case'
+	@rg --hidden --glob '!target' --glob '!.prompt_ignore_me' -- '--timeout-secs|--policy-dump|--no-audit|--max-calls-per-min|--max-json-kb|--cooldown-ms|--context-head|--head-limit|--head-ext' >/dev/null || (echo 'WARN: flags attendus manquants'; exit 1)
 
 .PHONY: release-draft release-publish
 release-draft:
