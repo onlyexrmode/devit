@@ -166,6 +166,7 @@ fn real_main() -> Result<()> {
                         "server.context_head",
                         "server.health",
                         "server.stats",
+                        "server.stats.reset",
                         "server.policy",
                         "echo"
                     ]}})
@@ -183,7 +184,8 @@ fn real_main() -> Result<()> {
                 let is_server_tool = name == "server.policy"
                     || name == "server.health"
                     || name == "server.stats"
-                    || name == "server.context_head";
+                    || name == "server.context_head"
+                    || name == "server.stats.reset";
                 if cli.dry_run && !is_server_tool {
                     let tool_key = name;
                     audit_pre(&audit, tool_key, "dry-run-deny");
@@ -345,6 +347,45 @@ fn real_main() -> Result<()> {
                             stdout,
                             "{}",
                             json!({"type":"tool.result","payload":{"ok":true,"name": tool_key, "stats": v}})
+                        )?;
+                    }
+                    "server.stats.reset" => {
+                        let tool_key = "server.stats.reset";
+                        state.bump_call(tool_key);
+                        // ratelimit
+                        let now = Instant::now();
+                        if let Err(e) = rl.allow(tool_key, now) {
+                            audit_pre(&audit, tool_key, "rate-limit");
+                            let v = match e {
+                                RateLimitErr::TooManyCalls { limit } => json!({
+                                    "type":"tool.error","payload":{
+                                        "name": tool_key,
+                                        "rate_limited": true,
+                                        "reason": "too_many_calls",
+                                        "limit_per_min": limit
+                                    }
+                                }),
+                                RateLimitErr::Cooldown { ms_left } => json!({
+                                    "type":"tool.error","payload":{
+                                        "name": tool_key,
+                                        "rate_limited": true,
+                                        "reason": "cooldown",
+                                        "cooldown_ms": ms_left
+                                    }
+                                }),
+                            };
+                            writeln!(stdout, "{}", v)?;
+                            continue;
+                        }
+                        let start = Instant::now();
+                        state.reset();
+                        let dur = start.elapsed().as_millis();
+                        audit_done(&audit, tool_key, true, dur, None);
+                        state.bump_ok(tool_key);
+                        writeln!(
+                            stdout,
+                            "{}",
+                            json!({"type":"tool.result","payload":{"ok":true,"name": tool_key}})
                         )?;
                     }
                     "server.policy" => {
@@ -655,6 +696,7 @@ fn default_policies() -> Policies {
     m.insert("server.context_head".to_string(), "never".to_string());
     m.insert("server.health".to_string(), "never".to_string());
     m.insert("server.stats".to_string(), "never".to_string());
+    m.insert("server.stats.reset".to_string(), "on_request".to_string());
     m.insert("echo".to_string(), "never".to_string());
     Policies(m)
 }
@@ -874,6 +916,7 @@ fn policy_effective_json(
         "devit.tool_call",
         "plugin.invoke",
         "server.policy",
+        "server.stats.reset",
         "echo",
     ] {
         let eff = policies
@@ -930,6 +973,15 @@ impl ServerState {
             total_ok: 0,
             total_err: 0,
         }
+    }
+    fn reset(&mut self) {
+        self.per_key_calls.clear();
+        self.per_key_ok.clear();
+        self.per_key_err.clear();
+        self.total_calls = 0;
+        self.total_ok = 0;
+        self.total_err = 0;
+        self.start = Instant::now();
     }
     fn bump_call(&mut self, key: &str) {
         self.total_calls += 1;

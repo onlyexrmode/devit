@@ -58,6 +58,9 @@ struct Cli {
     /// Affiche les stats serveur via MCP (server.stats)
     #[arg(long, action = ArgAction::SetTrue)]
     stats: bool,
+    /// Réinitialise les compteurs (server.stats.reset)
+    #[arg(long, action = ArgAction::SetTrue)]
+    stats_reset: bool,
     /// Top-N chemins depuis .devit/index.json via MCP (server.context_head)
     #[arg(long, action = ArgAction::SetTrue)]
     context_head: bool,
@@ -136,6 +139,12 @@ fn real_main() -> Result<()> {
 
     if cli.stats {
         let v = client.tool_call("server.stats", serde_json::json!({}))?;
+        safe_print_json(&v)?;
+        return Ok(());
+    }
+
+    if cli.stats_reset {
+        let v = client.tool_call("server.stats.reset", serde_json::json!({}))?;
         safe_print_json(&v)?;
         return Ok(());
     }
