@@ -311,17 +311,46 @@ fn real_main() -> Result<()> {
                             continue;
                         }
                         let args_json = payload.get("args").cloned().unwrap_or(json!({}));
-                        let id = match args_json.get("id").and_then(|v| v.as_str()) {
-                            Some(s) => s,
+                        // Schema check: id:string
+                        let id = match args_json.get("id") {
+                            Some(v) if v.is_string() => v.as_str().unwrap(),
+                            Some(_) => {
+                                writeln!(
+                                    stdout,
+                                    "{}",
+                                    json!({"type":"tool.error","payload":{ "schema_error": true, "path": "payload.id", "reason": "type_mismatch" }})
+                                )?;
+                                continue;
+                            }
                             None => {
                                 writeln!(
                                     stdout,
                                     "{}",
-                                    json!({"type":"tool.error","payload":{ "plugin_error": true, "reason": "manifest_missing", "message": "missing id" }})
+                                    json!({"type":"tool.error","payload":{ "schema_error": true, "path": "payload.id", "reason": "missing" }})
                                 )?;
                                 continue;
                             }
                         };
+                        // Schema check: payload:object
+                        match args_json.get("payload") {
+                            Some(v) if v.is_object() => {}
+                            Some(_) => {
+                                writeln!(
+                                    stdout,
+                                    "{}",
+                                    json!({"type":"tool.error","payload":{ "schema_error": true, "path": "payload.payload", "reason": "type_mismatch" }})
+                                )?;
+                                continue;
+                            }
+                            None => {
+                                writeln!(
+                                    stdout,
+                                    "{}",
+                                    json!({"type":"tool.error","payload":{ "schema_error": true, "path": "payload.payload", "reason": "missing" }})
+                                )?;
+                                continue;
+                            }
+                        }
                         let plugin_root = std::env::var("DEVIT_PLUGINS_DIR")
                             .map(PathBuf::from)
                             .unwrap_or_else(|_| PathBuf::from(".devit/plugins"));
@@ -678,6 +707,45 @@ fn real_main() -> Result<()> {
                             .clone()
                             .unwrap_or_else(|| PathBuf::from("devit"));
                         let args_json = payload.get("args").cloned().unwrap_or(json!({}));
+                        // Schema check: tool:string and args:object
+                        match args_json.get("tool") {
+                            Some(v) if v.is_string() => {}
+                            Some(_) => {
+                                writeln!(
+                                    stdout,
+                                    "{}",
+                                    json!({"type":"tool.error","payload":{ "schema_error": true, "path": "payload.tool", "reason": "type_mismatch" }})
+                                )?;
+                                continue;
+                            }
+                            None => {
+                                writeln!(
+                                    stdout,
+                                    "{}",
+                                    json!({"type":"tool.error","payload":{ "schema_error": true, "path": "payload.tool", "reason": "missing" }})
+                                )?;
+                                continue;
+                            }
+                        }
+                        match args_json.get("args") {
+                            Some(v) if v.is_object() => {}
+                            Some(_) => {
+                                writeln!(
+                                    stdout,
+                                    "{}",
+                                    json!({"type":"tool.error","payload":{ "schema_error": true, "path": "payload.args", "reason": "type_mismatch" }})
+                                )?;
+                                continue;
+                            }
+                            None => {
+                                writeln!(
+                                    stdout,
+                                    "{}",
+                                    json!({"type":"tool.error","payload":{ "schema_error": true, "path": "payload.args", "reason": "missing" }})
+                                )?;
+                                continue;
+                            }
+                        }
                         let start = Instant::now();
                         match run_devit_call(&bin, &args_json, timeout) {
                             Ok(out) => {
