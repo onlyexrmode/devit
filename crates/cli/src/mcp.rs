@@ -40,7 +40,8 @@ pub struct Capabilities {
 
 #[derive(Debug)]
 pub struct McpClient {
-    child: Child,
+    // Keep child alive; not otherwise read (suppress dead_code)
+    _child: Child,
     stdin: BufWriter<ChildStdin>,
     stdout: BufReader<ChildStdout>,
     per_msg_timeout: Duration,
@@ -71,7 +72,7 @@ impl McpClient {
                 .ok_or_else(|| anyhow!("child stdout missing"))?,
         );
         Ok(Self {
-            child,
+            _child: child,
             stdin,
             stdout,
             per_msg_timeout,

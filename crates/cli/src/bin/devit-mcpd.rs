@@ -949,7 +949,7 @@ fn which(bin: &str) -> Option<String> {
 
 fn health_json(
     audit: &AuditOpts,
-    policies: &Policies,
+    _policies: &Policies,
     limits: &Limits,
     state: &ServerState,
     server_version: &str,
