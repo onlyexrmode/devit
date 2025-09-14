@@ -58,6 +58,10 @@ struct Cli {
     #[arg(long, action = clap::ArgAction::SetTrue)]
     dry_run: bool,
 
+    /// Watchdog: stop server after N seconds (exit 2)
+    #[arg(long, value_name = "SECS")]
+    max_runtime_secs: Option<u64>,
+
     /// Limite: appels par minute
     #[arg(long = "max-calls-per-min", default_value_t = 60)]
     max_calls_per_min: u32,
@@ -78,6 +82,9 @@ fn main() {
 
 fn real_main() -> Result<()> {
     let cli = Cli::parse();
+    let max_runtime = cli
+        .max_runtime_secs
+        .map(std::time::Duration::from_secs);
     // Enrich server version with git metadata provided at build time
     let git_desc = option_env!("DEVIT_GIT_DESCRIBE").unwrap_or("unknown");
     let git_sha = option_env!("DEVIT_GIT_SHA").unwrap_or("unknown");
@@ -107,8 +114,21 @@ fn real_main() -> Result<()> {
         max_json_kb: cli.max_json_kb,
         cooldown: Duration::from_millis(cli.cooldown_ms),
     });
-    while let Some(line) = lines.next() {
-        let line = line?;
+    let started = Instant::now();
+    loop {
+        if let Some(deadline) = max_runtime {
+            if started.elapsed() > deadline {
+                eprintln!(
+                    "error: max runtime exceeded ({}s)",
+                    deadline.as_secs()
+                );
+                return Err(anyhow::anyhow!("max runtime exceeded"));
+            }
+        }
+        let line = match lines.next() {
+            Some(x) => x?,
+            None => break,
+        };
         if line.trim().is_empty() {
             continue;
         }
