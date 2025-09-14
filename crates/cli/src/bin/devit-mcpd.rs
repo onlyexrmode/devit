@@ -66,7 +66,13 @@ fn real_main() -> Result<()> {
                 writeln!(
                     stdout,
                     "{}",
-                    json!({"type":"version","payload":{"server": cli.server_version }})
+                    json!({
+                        "type":"version",
+                        "payload":{
+                            "server": cli.server_version,
+                            "server_name": "devit-mcpd"
+                        }
+                    })
                 )?;
             }
             "capabilities" => {
