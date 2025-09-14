@@ -220,6 +220,15 @@ Santé et stats :
 devit-mcp --cmd 'devit-mcpd --yes' --health | jq
 devit-mcp --cmd 'devit-mcpd --yes' --stats | jq
 
+Réinitialiser les compteurs (server.stats.reset) :
+
+```
+# Après quelques appels, remets les compteurs à zéro
+devit-mcp --cmd 'devit-mcpd --yes' --stats-reset | jq
+# Vérifier
+devit-mcp --cmd 'devit-mcpd --yes' --stats | jq '.payload.stats.totals'
+```
+
 Watchdog global (arrêt après N secondes) :
 
 ```

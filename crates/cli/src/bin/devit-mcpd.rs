@@ -82,9 +82,7 @@ fn main() {
 
 fn real_main() -> Result<()> {
     let cli = Cli::parse();
-    let max_runtime = cli
-        .max_runtime_secs
-        .map(std::time::Duration::from_secs);
+    let max_runtime = cli.max_runtime_secs.map(std::time::Duration::from_secs);
     // Enrich server version with git metadata provided at build time
     let git_desc = option_env!("DEVIT_GIT_DESCRIBE").unwrap_or("unknown");
     let git_sha = option_env!("DEVIT_GIT_SHA").unwrap_or("unknown");
@@ -118,10 +116,7 @@ fn real_main() -> Result<()> {
     loop {
         if let Some(deadline) = max_runtime {
             if started.elapsed() > deadline {
-                eprintln!(
-                    "error: max runtime exceeded ({}s)",
-                    deadline.as_secs()
-                );
+                eprintln!("error: max runtime exceeded ({}s)", deadline.as_secs());
                 return Err(anyhow::anyhow!("max runtime exceeded"));
             }
         }
@@ -163,6 +158,7 @@ fn real_main() -> Result<()> {
                     json!({"type":"capabilities","payload":{"tools":[
                         "devit.tool_list",
                         "devit.tool_call",
+                        "plugin.invoke",
                         "server.context_head",
                         "server.health",
                         "server.stats",
@@ -285,6 +281,134 @@ fn real_main() -> Result<()> {
                                 "payload": {"ok": true, "name": tool_key, "head": v}
                             })
                         )?;
+                    }
+                    "plugin.invoke" => {
+                        let tool_key = "plugin.invoke";
+                        state.bump_call(tool_key);
+                        // ratelimit
+                        let now = Instant::now();
+                        if let Err(e) = rl.allow(tool_key, now) {
+                            audit_pre(&audit, tool_key, "rate-limit");
+                            let v = match e {
+                                RateLimitErr::TooManyCalls { limit } => json!({
+                                    "type":"tool.error","payload":{
+                                        "name": tool_key,
+                                        "rate_limited": true,
+                                        "reason": "too_many_calls",
+                                        "limit_per_min": limit
+                                    }
+                                }),
+                                RateLimitErr::Cooldown { ms_left } => json!({
+                                    "type":"tool.error","payload":{
+                                        "name": tool_key,
+                                        "rate_limited": true,
+                                        "reason": "cooldown",
+                                        "cooldown_ms": ms_left
+                                    }
+                                }),
+                            };
+                            writeln!(stdout, "{}", v)?;
+                            continue;
+                        }
+                        let args_json = payload.get("args").cloned().unwrap_or(json!({}));
+                        let id = match args_json.get("id").and_then(|v| v.as_str()) {
+                            Some(s) => s,
+                            None => {
+                                writeln!(
+                                    stdout,
+                                    "{}",
+                                    json!({"type":"tool.error","payload":{ "plugin_error": true, "reason": "manifest_missing", "message": "missing id" }})
+                                )?;
+                                continue;
+                            }
+                        };
+                        let plugin_root = std::env::var("DEVIT_PLUGINS_DIR")
+                            .map(PathBuf::from)
+                            .unwrap_or_else(|_| PathBuf::from(".devit/plugins"));
+                        let manifest_path = plugin_root.join(id).join("devit-plugin.toml");
+                        if !manifest_path.exists() {
+                            writeln!(
+                                stdout,
+                                "{}",
+                                json!({"type":"tool.error","payload":{ "plugin_error": true, "reason": "manifest_missing", "id": id }})
+                            )?;
+                            continue;
+                        }
+                        match validate_manifest_for(&manifest_path, id) {
+                            Ok(info) => {
+                                if let Some(schema) = info.args_schema.as_ref() {
+                                    if let Some(req) = args_json.get("payload") {
+                                        if let Err((path, why)) =
+                                            validate_payload_types(req, schema)
+                                        {
+                                            writeln!(
+                                                stdout,
+                                                "{}",
+                                                json!({"type":"tool.error","payload":{ "plugin_error": true, "reason": "invalid", "schema_error": true, "path": path, "why": why }})
+                                            )?;
+                                            continue;
+                                        }
+                                    }
+                                }
+                                let bin = which("devit-plugin")
+                                    .map(PathBuf::from)
+                                    .or_else(|| {
+                                        let p = PathBuf::from("target/debug/devit-plugin");
+                                        if p.exists() {
+                                            Some(p)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap_or_else(|| PathBuf::from("devit-plugin"));
+                                let start = Instant::now();
+                                match run_devit_plugin_manifest(
+                                    &bin,
+                                    &manifest_path,
+                                    args_json.get("payload").cloned().unwrap_or(json!({})),
+                                    timeout,
+                                ) {
+                                    Ok(out) => {
+                                        let dur = start.elapsed().as_millis();
+                                        audit_done(&audit, tool_key, true, dur, None);
+                                        state.bump_ok(tool_key);
+                                        writeln!(
+                                            stdout,
+                                            "{}",
+                                            json!({"type":"tool.result","payload": {"name": tool_key, "result": out}})
+                                        )?;
+                                    }
+                                    Err(e) => {
+                                        let dur = start.elapsed().as_millis();
+                                        audit_done(
+                                            &audit,
+                                            tool_key,
+                                            false,
+                                            dur,
+                                            Some(&e.to_string()),
+                                        );
+                                        writeln!(
+                                            stdout,
+                                            "{}",
+                                            json!({"type":"tool.error","payload":{ "plugin_error": true, "reason": "exec_failed", "message": e.to_string() }})
+                                        )?;
+                                    }
+                                }
+                            }
+                            Err((reason, msg)) => {
+                                let mut m = serde_json::Map::new();
+                                m.insert("plugin_error".into(), json!(true));
+                                m.insert("reason".into(), json!(reason));
+                                if let Some(s) = msg {
+                                    m.insert("message".into(), json!(s));
+                                }
+                                writeln!(
+                                    stdout,
+                                    "{}",
+                                    json!({"type":"tool.error","payload": serde_json::Value::Object(m)})
+                                )?;
+                            }
+                        }
                     }
                     "server.health" => {
                         let tool_key = "server.health";
@@ -1016,6 +1140,185 @@ fn which(bin: &str) -> Option<String> {
         None
     } else {
         Some(s)
+    }
+}
+
+// ----- Plugin manifest validation and invocation helpers -----
+#[derive(serde::Deserialize)]
+struct ManifestCheck {
+    id: String,
+    #[serde(default)]
+    version: Option<String>,
+    wasm: String,
+    #[serde(default)]
+    allowed_dirs: Vec<String>,
+    #[serde(default)]
+    env: Vec<String>,
+    #[serde(default)]
+    args_schema: Option<HashMap<String, String>>,
+}
+
+struct ValidatedManifest {
+    #[allow(dead_code)]
+    id: String,
+    #[allow(dead_code)]
+    wasm_abs: PathBuf,
+    args_schema: Option<HashMap<String, String>>,
+}
+
+fn is_valid_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.chars().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' || c == '-'
+        })
+}
+
+fn is_rel_safe(p: &str) -> bool {
+    let path = Path::new(p);
+    if path.is_absolute() {
+        return false;
+    }
+    for comp in path.components() {
+        if matches!(comp, std::path::Component::ParentDir) {
+            return false;
+        }
+    }
+    true
+}
+
+fn validate_manifest_for(
+    path: &Path,
+    expected_id: &str,
+) -> Result<ValidatedManifest, (&'static str, Option<String>)> {
+    if !is_valid_id(expected_id) {
+        return Err(("invalid", Some("invalid id".to_string())));
+    }
+    let s = match fs::read_to_string(path) {
+        Ok(x) => x,
+        Err(_) => return Err(("manifest_missing", None)),
+    };
+    let m: ManifestCheck = match toml::from_str(&s) {
+        Ok(v) => v,
+        Err(e) => return Err(("invalid", Some(e.to_string()))),
+    };
+    if m.id != expected_id {
+        return Err(("invalid", Some("id mismatch".to_string())));
+    }
+    if let Some(ver) = &m.version {
+        // minimal semver check: a.b.c prefix numeric
+        let parts: Vec<&str> = ver.split('.').collect();
+        if parts.len() < 3
+            || parts[0].parse::<u64>().is_err()
+            || parts[1].parse::<u64>().is_err()
+            || parts[2]
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+                .is_empty()
+        {
+            return Err(("invalid", Some("version not semver-like".to_string())));
+        }
+    }
+    if !is_rel_safe(&m.wasm) {
+        return Err((
+            "path_outside_root",
+            Some("wasm path escapes root".to_string()),
+        ));
+    }
+    let root = path.parent().unwrap_or_else(|| Path::new("."));
+    let wasm_abs = root.join(&m.wasm);
+    if !wasm_abs.exists() {
+        return Err(("wasm_missing", None));
+    }
+    for d in &m.allowed_dirs {
+        if !is_rel_safe(d) {
+            return Err(("path_outside_root", Some(format!("bad allowed_dir: {d}"))));
+        }
+    }
+    Ok(ValidatedManifest {
+        id: m.id,
+        wasm_abs,
+        args_schema: m.args_schema,
+    })
+}
+
+fn validate_payload_types(
+    req: &serde_json::Value,
+    schema: &HashMap<String, String>,
+) -> Result<(), (String, &'static str)> {
+    let obj = match req.as_object() {
+        Some(m) => m,
+        None => return Err(("payload".to_string(), "type_mismatch")),
+    };
+    for (k, t) in schema.iter() {
+        if let Some(v) = obj.get(k) {
+            let ok = match t.as_str() {
+                "string" => v.is_string(),
+                "number" => v.is_number(),
+                "boolean" => v.is_boolean(),
+                "object" => v.is_object(),
+                _ => true,
+            };
+            if !ok {
+                return Err((format!("payload.{k}"), "type_mismatch"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn run_devit_plugin_manifest(
+    bin: &PathBuf,
+    manifest: &Path,
+    payload: serde_json::Value,
+    timeout: Duration,
+) -> Result<Value> {
+    let mut child = Command::new(bin)
+        .arg("invoke")
+        .arg("--manifest")
+        .arg(manifest)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .with_context(|| format!("spawn {:?} devit-plugin invoke", bin))?;
+
+    // write JSON to stdin
+    {
+        let mut sin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("child stdin missing"))?;
+        let s = serde_json::to_string(&payload)?;
+        use std::io::Write as _;
+        sin.write_all(s.as_bytes())?;
+        sin.flush()?;
+    }
+    let mut out = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("child stdout missing"))?;
+    let (tx, rx) = mpsc::sync_channel::<Result<String>>(1);
+    std::thread::spawn(move || {
+        let mut buf = String::new();
+        let res = out
+            .read_to_string(&mut buf)
+            .map(|_| buf)
+            .map_err(|e| anyhow!(e));
+        let _ = tx.send(res);
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(s) => {
+            let s = s?;
+            let v: Value =
+                serde_json::from_str(s.trim()).context("devit-plugin invoke: invalid JSON")?;
+            Ok(v)
+        }
+        Err(_) => {
+            let _ = child.kill();
+            eprintln!("error: devit-plugin invoke timeout");
+            std::process::exit(124);
+        }
     }
 }
 
