@@ -52,6 +52,9 @@ struct Cli {
     /// Chemin de la clé HMAC
     #[arg(long, default_value = ".devit/hmac.key")]
     hmac_key: PathBuf,
+    /// Mode dry-run: n'autorise que server.*; refuse toute exécution
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    dry_run: bool,
 }
 
 fn main() {
@@ -139,6 +142,26 @@ fn real_main() -> Result<()> {
                     .get("name")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("missing tool name"))?;
+                // Dry-run guard: only server.* tools allowed
+                let is_server_tool =
+                    name == "server.policy" || name == "server.health" || name == "server.stats";
+                if cli.dry_run && !is_server_tool {
+                    let tool_key = name;
+                    audit_pre(&audit, tool_key, "dry-run-deny");
+                    state.bump_err(tool_key);
+                    writeln!(
+                        stdout,
+                        "{}",
+                        json!({"type":"tool.error","payload":{
+                            "name": tool_key,
+                            "dry_run": true,
+                            "denied": true,
+                            "reason": "server in dry-run (server.* only)"
+                        }})
+                    )?;
+                    stdout.flush()?;
+                    continue;
+                }
                 let policy = policies
                     .0
                     .get(name)
