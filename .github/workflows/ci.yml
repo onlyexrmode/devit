@@ -126,3 +126,23 @@ jobs:
         with:
           name: devit-${{ matrix.os }}
           path: target/release/devit
+
+  mcp_e2e:
+    name: MCP E2E smoke
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build experimental bins
+        run: cargo build -p devit-cli --features experimental --bins
+      - name: Run E2E MCP
+        run: |
+          set -euo pipefail
+          SRV="target/debug/devit-mcpd --yes --devit-bin target/debug/devit"
+          ($SRV & echo $! > mcpd.pid)
+          sleep 0.5
+          target/debug/devit-mcp --cmd "$SRV" --policy >/dev/null
+          target/debug/devit-mcp --cmd "$SRV" --call server.health --json '{}' >/dev/null
+          target/debug/devit-mcp --cmd "$SRV" --call server.stats --json '{}' >/dev/null
+          kill $(cat mcpd.pid) || true
