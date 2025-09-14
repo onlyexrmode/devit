@@ -9,9 +9,10 @@ DEVIT_PKG ?= devit-cli
 DEVIT_BIN ?= devit
 # Ensure cargo gets a binary NAME, not a path possibly set in env
 DEVIT_BIN_NAME := $(notdir $(DEVIT_BIN))
+PLUGINS_DIR ?= .devit/plugins
 
 .PHONY: fmt fmt-check fmt-fix clippy lint test test-cli build build-release smoke ci check verify help \
-        build-cli run-cli release-cli check-cli ci-cli help-cli
+        build-cli run-cli release-cli check-cli ci-cli help-cli plugin-echo-sum
 
 help:
 	@echo "Targets: fmt | fmt-check | fmt-fix | clippy | lint | test | test-cli | build | build-release | smoke | check | verify | ci"
@@ -167,6 +168,25 @@ help-cli:
 	@echo "check-cli      : fmt + clippy -D warnings + tests"
 	@echo "ci-cli         : check-cli + build-cli"
 	@echo "dist           : package tar.gz + sha256 (local)"
+
+# ===== Plugins (WASM/WASI) helpers =====
+plugin-echo-sum:
+	@echo "[plugin-echo-sum] ensure wasm32-wasi target"
+	@if ! rustup target list --installed | grep -q wasm32-wasi; then \
+	  rustup target add wasm32-wasi; \
+	fi
+	@echo "[plugin-echo-sum] build example plugin (echo_sum)"
+	cargo build --manifest-path examples/plugins/echo_sum/Cargo.toml --target wasm32-wasi --release
+	@echo "[plugin-echo-sum] install into $(PLUGINS_DIR)/echo_sum"
+	mkdir -p $(PLUGINS_DIR)/echo_sum
+	cp target/wasm32-wasi/release/echo_sum.wasm $(PLUGINS_DIR)/echo_sum/
+	@if [ ! -f "$(PLUGINS_DIR)/echo_sum/devit-plugin.toml" ]; then \
+	  cat > "$(PLUGINS_DIR)/echo_sum/devit-plugin.toml" <<'TOML'; \
+	id = "echo_sum"\nname = "Echo Sum"\nwasm = "echo_sum.wasm"\nversion = "0.1.0"\nallowed_dirs = []\nenv = []\nTOML\n \
+	else \
+	  echo "[plugin-echo-sum] manifest exists; keeping existing $(PLUGINS_DIR)/echo_sum/devit-plugin.toml"; \
+	fi
+	@echo "[plugin-echo-sum] done"
 
 # Generic IDs generator: N defaults to 50 (usage: make bench-ids N=50)
 bench-ids:
