@@ -189,6 +189,29 @@ Outils exposés (server):
 - `plugin.invoke` — proxy de `devit-plugin invoke --id <id>` (JSON stdin → JSON stdout)
 - `echo` — outil de test
 
+Profils d'approbation (server)
+
+- Config (`.devit/devit.toml`):
+
+```
+[mcp]
+profile = "safe" # ou "std" | "danger"
+[mcp.approvals]
+# overrides spécifiques par outil (facultatif)
+"server.stats.reset" = "never"
+```
+
+- Presets:
+  - safe: `devit.tool_call=on_request`, `plugin.invoke=on_request`, `server.*=never`
+  - std: `devit.tool_call=on_failure`, `plugin.invoke=on_request`, `server.*=never`
+  - danger: `devit.tool_call=never`, `plugin.invoke=on_failure`, `server.*=never`
+- Inspecter la politique effective:
+
+```
+devit-mcp --cmd 'devit-mcpd --yes' --policy | jq
+# JSON inclut: { "profile": "safe|std|danger|none", "tools": { ... } }
+```
+
 Flags utiles (client) :
 
 - `--policy`, `--health`, `--stats`, `--call <name> --json '<payload>'`
