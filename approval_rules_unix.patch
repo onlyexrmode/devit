@@ -1,0 +1,336 @@
+diff --git a/crates/cli/Cargo.toml b/crates/cli/Cargo.toml
+index 7777777..8888888 100644
+--- a/crates/cli/Cargo.toml
++++ b/crates/cli/Cargo.toml
+@@ -18,10 +18,11 @@ experimental = []
+ 
+ [[bin]]
+ name = "devit-mcpd"
+ path = "src/bin/devit-mcpd.rs"
+ required-features = ["experimental"]
+ 
+ [dependencies]
+ anyhow = "1"
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"
+ thiserror = "1"
++toml = "0.8"
+diff --git a/crates/cli/src/mcp_server.rs b/crates/cli/src/mcp_server.rs
+index b4c2d1e..a6f7d10 100644
+--- a/crates/cli/src/mcp_server.rs
++++ b/crates/cli/src/mcp_server.rs
+@@ -1,29 +1,55 @@
+ //! Serveur MCP minimal (stdio). EXPERIMENTAL.
+ //! Outils exposés:
+ //! - devit.tool_list   -> `devit tool list`
+ //! - devit.tool_call   -> `devit tool call -` (JSON sur stdin)
+ //! - echo              -> test simple
+ use anyhow::{anyhow, Context, Result};
+ use serde::{Deserialize, Serialize};
+ use serde_json::{json, Value};
+ use std::env;
+ use std::io::{BufRead, BufReader, Write};
+ use std::process::{Command, Stdio};
+ use std::time::Duration;
+ use thiserror::Error;
++use std::collections::HashMap;
++use std::fs;
++use std::path::{Path, PathBuf};
+ 
+ #[derive(Debug, Error)]
+ pub enum TimeoutErr {
+     #[error("timeout waiting child process")]
+     Waiting,
+ }
+ 
+ fn timeout_from_env() -> Duration {
+     let secs = env::var("DEVIT_TIMEOUT_SECS")
+         .ok()
+         .and_then(|s| s.parse::<u64>().ok())
+         .unwrap_or(30);
+     Duration::from_secs(secs)
+ }
+ 
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++enum ApprovalPolicy { Never, OnRequest, OnFailure, Untrusted }
++
++#[derive(Clone, Debug)]
++struct Approvals {
++    default: ApprovalPolicy,
++    per_tool: HashMap<String, ApprovalPolicy>,
++}
++
++impl Approvals {
++    fn policy_for(&self, tool: &str) -> ApprovalPolicy {
++        self.per_tool.get(tool).copied().unwrap_or(self.default)
++    }
++}
++
++fn parse_policy<S: AsRef<str>>(s: S) -> Option<ApprovalPolicy> {
++    let t = s.as_ref().to_ascii_lowercase().replace('_', "-");
++    match t.as_str() {
++        "never" => Some(ApprovalPolicy::Never),
++        "on-request" => Some(ApprovalPolicy::OnRequest),
++        "on-failure" => Some(ApprovalPolicy::OnFailure),
++        "untrusted" => Some(ApprovalPolicy::Untrusted),
++        _ => None,
++    }
++}
++
+ #[derive(Clone)]
+ pub struct ServerOpts {
+     pub devit_bin: String,
+     pub per_msg_timeout: Duration,
+     pub server_name: String,
+     pub server_version: String,
++    pub approvals: Approvals,
++    pub auto_yes: bool,
+ }
+ 
+ pub fn run_loop(opts: ServerOpts) -> Result<()> {
+@@ -54,18 +80,20 @@ pub fn run_loop(opts: ServerOpts) -> Result<()> {
+         };
+         let t = msg.get("type").and_then(|x| x.as_str()).unwrap_or("");
+         let reply = match t {
+             "ping" => json!({"type":"pong"}),
+             "version" => json!({"type":"version","payload":{"server":opts.server_name,"version":opts.server_version}}),
+             "capabilities" => json!({"type":"capabilities","payload":{"tools":["devit.tool_list","devit.tool_call","echo"]}}),
+-            "tool.call" => handle_tool_call(&opts, &msg),
++            "tool.call" => handle_tool_call(&opts, &msg),
+             _ => json!({"type":"error","payload":{"reason":format!("unknown type: {t}")}}),
+         };
+         writeln!(stdout, "{reply}")?;
+         stdout.flush()?;
+     }
+     Ok(())
+ }
+ 
+-fn handle_tool_call(opts: &ServerOpts, msg: &Value) -> Value {
++fn handle_tool_call(opts: &ServerOpts, msg: &Value) -> Value {
+     let Some(payload) = msg.get("payload") else {
+         return json!({"type":"tool.error","payload":{"error":"missing payload"}});
+     };
+     let name = payload.get("name").and_then(|v| v.as_str()).unwrap_or("");
+     let args = payload.get("args").cloned().unwrap_or(json!({}));
++    let pol = opts.approvals.policy_for(name);
+     match name {
+         "echo" => {
+             let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
+             json!({"type":"tool.result","payload":{"ok":true,"name":"echo","echo":text}})
+         }
+         "devit.tool_list" => {
+-            match run_devit_json(&opts.devit_bin, &["tool","list"], None, opts.per_msg_timeout) {
++            if needs_pre_approval(pol) && !opts.auto_yes {
++                return approval_required(name, pol, "pre");
++            }
++            match run_devit_json(&opts.devit_bin, &["tool","list"], None, opts.per_msg_timeout) {
+                 Ok(v) => json!({"type":"tool.result","payload":{"ok":true,"name":name,"result":v}}),
+-                Err(e) => map_exec_err(name, e),
++                Err(e) => {
++                    if needs_post_failure_approval(pol) && !opts.auto_yes {
++                        approval_required(name, pol, "post-failure")
++                    } else {
++                        map_exec_err(name, e)
++                    }
++                },
+             }
+         }
+         "devit.tool_call" => {
+-            // Par défaut on passe tout `args` tel quel sur stdin.
++            if needs_pre_approval(pol) && !opts.auto_yes {
++                return approval_required(name, pol, "pre");
++            }
++            // Pass-through `args` vers stdin JSON
+             let stdin_json = args.to_string();
+-            match run_devit_json(&opts.devit_bin, &["tool","call","-"], Some(stdin_json.as_str()), opts.per_msg_timeout) {
++            match run_devit_json(&opts.devit_bin, &["tool","call","-"], Some(stdin_json.as_str()), opts.per_msg_timeout) {
+                 Ok(v) => json!({"type":"tool.result","payload":{"ok":true,"name":name,"result":v}}),
+-                Err(e) => map_exec_err(name, e),
++                Err(e) => {
++                    if needs_post_failure_approval(pol) && !opts.auto_yes {
++                        approval_required(name, pol, "post-failure")
++                    } else {
++                        map_exec_err(name, e)
++                    }
++                },
+             }
+         }
+         _ => json!({"type":"tool.error","payload":{"error":format!("unknown tool: {name}")}}),
+     }
+ }
+ 
++fn needs_pre_approval(pol: ApprovalPolicy) -> bool {
++    matches!(pol, ApprovalPolicy::OnRequest | ApprovalPolicy::Untrusted)
++}
++fn needs_post_failure_approval(pol: ApprovalPolicy) -> bool {
++    matches!(pol, ApprovalPolicy::OnFailure)
++}
++fn approval_required(name: &str, pol: ApprovalPolicy, phase: &str) -> Value {
++    json!({"type":"tool.error","payload":{
++        "name": name,
++        "approval_required": true,
++        "policy": match pol {
++            ApprovalPolicy::Never => "never",
++            ApprovalPolicy::OnRequest => "on_request",
++            ApprovalPolicy::OnFailure => "on_failure",
++            ApprovalPolicy::Untrusted => "untrusted",
++        },
++        "phase": phase
++    }})
++}
++
+ fn map_exec_err(name: &str, e: anyhow::Error) -> Value {
+     if e.downcast_ref::<TimeoutErr>().is_some() {
+         json!({"type":"tool.error","payload":{"name":name,"timeout":true,"error":"timeout"}})
+     } else {
+         json!({"type":"tool.error","payload":{"name":name,"error":format!("{e}")}})
+@@ -147,6 +199,95 @@ fn run_devit_json(devit_bin: &str, args: &[&str], stdin_json: Option<&str>, timeout: Duration) -> Result<Value> {
+     }
+ }
+ 
++// ---------- Config ----------
++#[derive(Debug, Deserialize)]
++struct DevitToml {
++    #[serde(default)]
++    mcp: Option<McpToml>,
++}
++#[derive(Debug, Deserialize)]
++struct McpToml {
++    #[serde(default)]
++    approvals: Option<HashMap<String, String>>,
++}
++
++fn load_approvals(config_path: Option<&Path>) -> Approvals {
++    // Defaults sûrs : tool_list libre, tool_call demande.
++    let mut cfg = Approvals {
++        default: ApprovalPolicy::OnRequest,
++        per_tool: HashMap::new(),
++    };
++    cfg.per_tool.insert("devit.tool_list".into(), ApprovalPolicy::Never);
++    cfg.per_tool.insert("devit.tool_call".into(), ApprovalPolicy::OnRequest);
++    cfg.per_tool.insert("echo".into(), ApprovalPolicy::Never);
++
++    let path = match config_path {
++        Some(p) => p.to_path_buf(),
++        None => PathBuf::from(".devit/devit.toml"),
++    };
++    if !path.exists() {
++        return cfg;
++    }
++    let Ok(s) = fs::read_to_string(&path) else { return cfg; };
++    let Ok(parsed) = toml::from_str::<DevitToml>(&s) else { return cfg; };
++    if let Some(mcp) = parsed.mcp {
++        if let Some(ap) = mcp.approvals {
++            for (k, v) in ap {
++                if k == "default" {
++                    if let Some(p) = parse_policy(&v) {
++                        cfg.default = p;
++                    }
++                    continue;
++                }
++                if let Some(p) = parse_policy(&v) {
++                    cfg.per_tool.insert(k, p);
++                }
++            }
++        }
++    }
++    cfg
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+     #[test]
+     fn caps_list() {
+@@ -164,4 +305,31 @@ mod tests {
+         let e = map_exec_err("x", TimeoutErr::Waiting.into());
+         assert_eq!(e["payload"]["timeout"], true);
+     }
++
++    #[test]
++    fn approvals_defaults_and_mapping() {
++        let cfg = load_approvals(None); // pas de fichier → defaults
++        assert_eq!(cfg.policy_for("devit.tool_list") as u8, ApprovalPolicy::Never as u8);
++        assert_eq!(cfg.policy_for("devit.tool_call") as u8, ApprovalPolicy::OnRequest as u8);
++        assert_eq!(cfg.policy_for("unknown") as u8, ApprovalPolicy::OnRequest as u8);
++    }
++
++    #[test]
++    fn approval_required_shape() {
++        let v = approval_required("devit.tool_call", ApprovalPolicy::OnRequest, "pre");
++        assert_eq!(v["type"], "tool.error");
++        assert_eq!(v["payload"]["approval_required"], true);
++        assert_eq!(v["payload"]["phase"], "pre");
++    }
+ }
+diff --git a/crates/cli/src/bin/devit-mcpd.rs b/crates/cli/src/bin/devit-mcpd.rs
+index ccddeef..ddeeff0 100644
+--- a/crates/cli/src/bin/devit-mcpd.rs
++++ b/crates/cli/src/bin/devit-mcpd.rs
+@@ -1,27 +1,41 @@
+ //! Serveur MCP stdio (expérimental) exposant des outils DevIt.
+ //! Usage typique (test):
+ //!   devit-mcpd | <client>    # mais le plus simple est d'utiliser devit-mcp --cmd ...
+ use anyhow::Result;
+ use clap::Parser;
+ 
+ // Import interne
+ #[path = "../mcp_server.rs"]
+ mod mcp_server;
+-use mcp_server::{run_loop, ServerOpts};
++use mcp_server::{run_loop, ServerOpts};
+ use std::time::Duration;
++use std::path::PathBuf;
+ 
+ #[derive(Parser, Debug)]
+ #[command(name = "devit-mcpd")]
+ #[command(about = "MCP server (stdio) exposant devit.tool_* (expérimental)")]
+ struct Cli {
+     /// Binaire devit à invoquer (par défaut: 'devit' dans le PATH)
+     #[arg(long, default_value = "devit")]
+     devit_bin: String,
+     /// Timeout par message en secondes (fallback DEVIT_TIMEOUT_SECS ou 30)
+     #[arg(long, value_name = "SECS")]
+     timeout_secs: Option<u64>,
+     /// Annonce 'version' du serveur
+     #[arg(long, default_value = "0.2.0-rc.1")]
+     server_version: String,
++    /// Auto-approve (bypass les demandes d'approbation)
++    #[arg(long, action = clap::ArgAction::SetTrue)]
++    yes: bool,
++    /// Chemin du fichier de config (par défaut: .devit/devit.toml)
++    #[arg(long)]
++    config: Option<PathBuf>,
+ }
+ 
+ fn main() {
+     let code = match real_main() {
+         Ok(()) => 0,
+         Err(e) => {
+             // Mappe un timeout à 124 si c'était remonté par la boucle (peu probable ici)
+             eprintln!("error: {e}");
+             2
+         }
+     };
+     std::process::exit(code);
+ }
+ 
+ fn real_main() -> Result<()> {
+     let cli = Cli::parse();
+     let per_msg = cli
+         .timeout_secs
+         .map(Duration::from_secs)
+-        .unwrap_or_else(mcp_server::timeout_from_env);
++        .unwrap_or_else(mcp_server::timeout_from_env);
++    let approvals = mcp_server::load_approvals(cli.config.as_deref().map(|p| p.as_path()));
+     let opts = ServerOpts {
+         devit_bin: cli.devit_bin,
+         per_msg_timeout: per_msg,
+         server_name: "devit-mcpd".into(),
+         server_version: cli.server_version,
++        approvals,
++        auto_yes: cli.yes,
+     };
+     run_loop(opts)
+ }
+
