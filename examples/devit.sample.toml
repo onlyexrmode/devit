@@ -1,0 +1,30 @@
+## Sample configuration for DevIt (save as devit.toml at repo root)
+
+[backend]
+kind = "openai_like"
+base_url = ""
+model = ""
+api_key = ""
+
+[policy]
+approval = "on_request"
+sandbox  = "workspace-write"
+
+[sandbox]
+cpu_limit     = 1
+mem_limit_mb = 64
+net          = "off"
+
+[git]
+conventional     = true
+max_staged_files = 10
+use_notes        = true
+
+[provenance]
+footer = true
+
+[mcp]
+profile = "std"
+
+#[mcp.approvals]
+#"server.stats.reset" = "never"

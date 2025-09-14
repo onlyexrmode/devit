@@ -19,6 +19,7 @@ v0.2‑rc highlights (Confiance & interop)
 - `fs_patch_apply`: `check_only` and `mode: index|worktree` via JSON args
 - Context map: `devit context map .` → `.devit/index.json` (respects .gitignore; ignores `.devit/`, `target/`, `bench/`)
 - Journal JSONL signé (HMAC) sous `.devit/journal.jsonl`; option `git.use_notes`
+  - Provenance (footer/notes): activer le footer via `[provenance] footer=true`; ajouter des notes via `[git] use_notes=true`.
 - Experimental (feature-gated): `devit-mcp` (MCP stdio client). Build/run with:
   - `cargo run -p devit-cli --features experimental --bin devit-mcp -- --help`
 
@@ -259,6 +260,14 @@ Watchdog global (arrêt après N secondes) :
 devit-mcp --cmd 'devit-mcpd --yes --max-runtime-secs 1' --policy || echo "exit=$?"
 ```
 ```
+
+Config d'exemple
+
+- Un fichier complet d'exemple est disponible: `examples/devit.sample.toml`.
+- Copiez-le à la racine sous le nom `devit.toml` et adaptez:
+  - `[provenance] footer=true` pour ajouter un trailer "DevIt-Attest" dans les commits
+  - `[git] use_notes=true` pour ajouter des `git notes` d'attestation
+  - `[mcp] profile = "safe|std|danger"` et éventuels overrides `[mcp.approvals]`
 
 Appel de tool :
 

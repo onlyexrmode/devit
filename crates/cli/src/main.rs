@@ -178,7 +178,11 @@ async fn main() -> Result<()> {
             // Pas de goal ici → fallback générique
             let commit_msg = default_commit_msg(None, &summary);
             let attest = compute_attest_hash(&patch);
-            let full_msg = format!("{}\n\nDevIt-Attest: {}", commit_msg, attest);
+            let full_msg = if cfg.provenance.footer {
+                format!("{}\n\nDevIt-Attest: {}", commit_msg, attest)
+            } else {
+                commit_msg.clone()
+            };
             if !git::commit(&full_msg)? {
                 anyhow::bail!("Échec git commit.");
             }
@@ -263,7 +267,11 @@ async fn main() -> Result<()> {
                 .filter(|s| !s.trim().is_empty())
                 .unwrap_or_else(|| default_commit_msg(Some(&goal), &summary));
             let attest = compute_attest_hash(&patch);
-            let full_msg = format!("{}\n\nDevIt-Attest: {}", commit_msg, attest);
+            let full_msg = if cfg.provenance.footer {
+                format!("{}\n\nDevIt-Attest: {}", commit_msg, attest)
+            } else {
+                commit_msg.clone()
+            };
             if !git::commit(&full_msg)? {
                 anyhow::bail!("Échec git commit.");
             }

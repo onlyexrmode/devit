@@ -10,6 +10,8 @@ pub struct Config {
     pub policy: PolicyCfg,
     pub sandbox: SandboxCfg,
     pub git: GitCfg,
+    #[serde(default)]
+    pub provenance: ProvenanceCfg,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +45,12 @@ pub struct GitCfg {
     pub max_staged_files: u32,
     #[serde(default)]
     pub use_notes: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProvenanceCfg {
+    #[serde(default)]
+    pub footer: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
