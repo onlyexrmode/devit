@@ -7,6 +7,7 @@ use devit_agent::Agent;
 use devit_common::{Config, Event, PolicyCfg};
 use devit_sandbox as sandbox;
 use devit_tools::{codeexec, git};
+mod precommit;
 use hmac::{Hmac, Mac};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -93,6 +94,12 @@ enum ToolCmd {
         /// Auto-approve (no prompt)
         #[arg(long)]
         yes: bool,
+        /// Skip precommit gate (only for fs_patch_apply)
+        #[arg(long = "no-precommit")]
+        no_precommit: bool,
+        /// Only run precommit pipeline and exit (only for fs_patch_apply)
+        #[arg(long = "precommit-only")]
+        precommit_only: bool,
     },
 }
 
@@ -320,7 +327,7 @@ async fn main() -> Result<()> {
                 ]);
                 println!("{}", serde_json::to_string_pretty(&tools).unwrap());
             }
-            ToolCmd::Call { name, input, yes } => {
+            ToolCmd::Call { name, input, yes, no_precommit, precommit_only } => {
                 if name == "-" {
                     let mut s = String::new();
                     stdin().lock().read_to_string(&mut s)?;
@@ -343,7 +350,7 @@ async fn main() -> Result<()> {
                         ),
                     }
                 } else {
-                    let out = tool_call_legacy(&cfg, &name, &input, yes);
+                    let out = tool_call_legacy(&cfg, &name, &input, yes, no_precommit, precommit_only);
                     if let Err(e) = out {
                         anyhow::bail!(e);
                     }
@@ -584,12 +591,37 @@ fn tool_call_json(
             }
             let patch = args.get("patch").and_then(|v| v.as_str()).unwrap_or("");
             let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("index");
+            let no_precommit = args.get("no_precommit").and_then(|v| v.as_bool()).unwrap_or(false);
+            let precommit_only = args.get("precommit_only").and_then(|v| v.as_bool()).unwrap_or(false);
             let check_only = args
                 .get("check_only")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             if patch.is_empty() {
                 anyhow::bail!("fs_patch_apply: champ 'patch' requis (contenu du diff)");
+            }
+            // Precommit gate
+            if precommit_only {
+                match precommit::run(cfg) {
+                    Ok(()) => return Ok(serde_json::json!({"precommit_ok": true})),
+                    Err(f) => anyhow::bail!(format!("{}", serde_json::json!({
+                        "precommit_failed": true, "tool": f.tool, "exit_code": f.exit_code, "stderr": f.stderr
+                    }))),
+                }
+            }
+            if no_precommit {
+                // Bypass policy check
+                if !yes || !precommit::bypass_allowed(cfg) {
+                    anyhow::bail!(format!("{}", serde_json::json!({
+                        "approval_required": true, "policy": "on_request", "phase": "pre", "reason": "precommit_bypass"
+                    })));
+                }
+            } else {
+                if let Err(f) = precommit::run(cfg) {
+                    anyhow::bail!(format!("{}", serde_json::json!({
+                        "precommit_failed": true, "tool": f.tool, "exit_code": f.exit_code, "stderr": f.stderr
+                    })));
+                }
             }
             git::apply_check(patch)?;
             if check_only {
@@ -630,7 +662,7 @@ fn tool_call_json(
     }
 }
 
-fn tool_call_legacy(cfg: &Config, name: &str, input: &str, yes: bool) -> Result<()> {
+fn tool_call_legacy(cfg: &Config, name: &str, input: &str, yes: bool, no_precommit: bool, precommit_only: bool) -> Result<()> {
     match name {
         "fs_patch_apply" => {
             ensure_git_repo()?;
@@ -638,6 +670,30 @@ fn tool_call_legacy(cfg: &Config, name: &str, input: &str, yes: bool) -> Result<
                 anyhow::bail!("policy.sandbox=read-only: apply refusé (aucune écriture autorisée)");
             }
             let patch = read_patch(input)?;
+            if precommit_only {
+                match precommit::run(cfg) {
+                    Ok(()) => {
+                        println!("precommit_ok: true");
+                        return Ok(());
+                    }
+                    Err(f) => anyhow::bail!(format!("{}", serde_json::json!({
+                        "precommit_failed": true, "tool": f.tool, "exit_code": f.exit_code, "stderr": f.stderr
+                    }))),
+                }
+            }
+            if no_precommit {
+                if !yes || !precommit::bypass_allowed(cfg) {
+                    anyhow::bail!(format!("{}", serde_json::json!({
+                        "approval_required": true, "policy": "on_request", "phase": "pre", "reason": "precommit_bypass"
+                    })));
+                }
+            } else {
+                if let Err(f) = precommit::run(cfg) {
+                    anyhow::bail!(format!("{}", serde_json::json!({
+                        "precommit_failed": true, "tool": f.tool, "exit_code": f.exit_code, "stderr": f.stderr
+                    })));
+                }
+            }
             git::apply_check(&patch)?;
             let ask = requires_approval_tool(&cfg.policy, "git", yes, "write");
             if ask && !ask_approval()? {

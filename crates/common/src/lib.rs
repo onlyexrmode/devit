@@ -12,6 +12,8 @@ pub struct Config {
     pub git: GitCfg,
     #[serde(default)]
     pub provenance: ProvenanceCfg,
+    #[serde(default)]
+    pub precommit: Option<PrecommitCfg>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +53,27 @@ pub struct GitCfg {
 pub struct ProvenanceCfg {
     #[serde(default)]
     pub footer: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrecommitCfg {
+    #[serde(default = "default_true")] 
+    pub rust: bool,
+    #[serde(default = "default_true")] 
+    pub javascript: bool,
+    #[serde(default = "default_true")] 
+    pub python: bool,
+    #[serde(default)]
+    pub additional: Vec<String>,
+    #[serde(default = "default_fail_on")] 
+    pub fail_on: Vec<String>,
+    #[serde(default)]
+    pub allow_bypass_profiles: Vec<String>,
+}
+
+fn default_true() -> bool { true }
+fn default_fail_on() -> Vec<String> {
+    vec!["rust".into(), "javascript".into(), "python".into()]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
