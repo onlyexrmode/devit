@@ -3,7 +3,7 @@
 # -----------------------------
 [package]
 name = "devit-cli"
-version = "0.2.0-rc.2"
+version = "0.3.0"
 edition = "2021"
 build = "build.rs"
 

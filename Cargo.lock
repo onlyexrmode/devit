@@ -481,7 +481,7 @@ dependencies = [
 
 [[package]]
 name = "devit-agent"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -495,7 +495,7 @@ dependencies = [
 
 [[package]]
 name = "devit-backend-openai"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -508,7 +508,7 @@ dependencies = [
 
 [[package]]
 name = "devit-cli"
-version = "0.2.0-rc.2"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -544,7 +544,7 @@ dependencies = [
 
 [[package]]
 name = "devit-common"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -554,7 +554,7 @@ dependencies = [
 
 [[package]]
 name = "devit-sandbox"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "devit-common",
@@ -562,7 +562,7 @@ dependencies = [
 
 [[package]]
 name = "devit-tools"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -574,7 +574,7 @@ dependencies = [
 
 [[package]]
 name = "devit-tui"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "crossterm",

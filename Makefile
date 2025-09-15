@@ -4,7 +4,7 @@ SHELL := bash
 
 # Package/binary names for CLI (override via env if needed)
 # Keep binary name `devit`; package is the CLI crate name.
-TAG ?= v0.2.0-rc.2
+TAG ?= v0.3.0
 DEVIT_PKG ?= devit-cli
 DEVIT_BIN ?= devit
 # Ensure cargo gets a binary NAME, not a path possibly set in env

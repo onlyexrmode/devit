@@ -1,5 +1,28 @@
 # RELEASE_NOTES.md
-# RELEASE_NOTES.md
+
+## v0.3.0
+
+Highlights
+- Pre-commit gate (fs_patch_apply): lint/format checks (Rust/JS/Python) before apply; bypass policy; normalized errors.
+- Impacted tests runner: `devit test impacted` (cargo/npm/pytest/ctest heuristics) + JUnit minimal.
+- Commit messages (Conventional Commits): generator + integration in fs_patch_apply and run; scopes alias; provenance footer.
+- Reports: SARIF/JUnit exporters; Quality gate aggregation + thresholds; PR annotation and artifacts.
+- Mini pipeline: fs_patch_apply → precommit → apply → impacted tests (+ optional revert) → commit message.
+- PR summary: enriched summary.md (proposed commit subject + SHA).
+- Merge-assist: explain/apply + one-shot resolve (auto plan) for simple conflicts.
+
+Details
+- fs_patch_apply flags: commit(auto|on|off), commit_type, commit_scope, commit_body_template, commit_dry_run, signoff, no_provenance_footer.
+- Quality gate config `[quality]`: max_test_failures, max_lint_errors, allow_lint_warnings, fail_on_missing_reports.
+- Commit config `[commit]`: max_subject, scopes_alias, default_type, template_body.
+- Summary: `.devit/reports/summary.md` now includes proposed commit and SHA if available.
+
+CI
+- Build/test matrix + fmt/clippy (blocking).
+- MCP E2E smoke job (non-blocking).
+- Reports generation + quality gate aggregation; uploads JUnit/SARIF artifacts.
+- PR comment: Quality summary; summary.md consumed by CI step.
+
 ## v0.2-rc.2
 - MCP server.* tools: policy, health, stats, context_head
 - Audit HMAC signé (.devit/journal.jsonl)
