@@ -13,7 +13,7 @@ PLUGINS_DIR ?= .devit/plugins
 
 .PHONY: fmt fmt-check fmt-fix clippy lint test test-cli build build-release smoke ci check verify help \
         build-cli run-cli release-cli check-cli ci-cli help-cli plugin-echo-sum plugin-echo-sum-run \
-        e2e-plugin lint-flags
+        e2e-plugin lint-flags test-impacted
 
 help:
 	@echo "Targets: fmt | fmt-check | fmt-fix | clippy | lint | test | test-cli | build | build-release | smoke | check | verify | ci"
@@ -116,6 +116,11 @@ verify: check build test
 
 ci: verify
 
+reports:
+	@cargo run -p $(DEVIT_PKG) --bin $(DEVIT_BIN_NAME) -- report sarif >/dev/null
+	@cargo run -p $(DEVIT_PKG) --bin $(DEVIT_BIN_NAME) -- report junit >/dev/null
+	@ls -lah .devit/reports || true
+
 # Lint flags (kebab-case only + expected flags present)
 lint-flags:
 	@rg --hidden --glob '!target' --glob '!.prompt_ignore_me' -- '--[a-z]+_[a-z]+' || echo 'OK: aucun flag snake_case'
@@ -211,6 +216,9 @@ e2e-mcp:
 
 e2e-plugin:
 	@bash scripts/e2e_plugin.sh
+
+test-impacted:
+	@cargo run -p $(DEVIT_PKG) -- test impacted --framework auto --timeout-secs 300
 
 # ===== Plugins (WASM/WASI) helpers =====
 

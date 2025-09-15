@@ -8,6 +8,9 @@ use devit_common::{Config, Event, PolicyCfg};
 use devit_sandbox as sandbox;
 use devit_tools::{codeexec, git};
 mod precommit;
+mod test_runner;
+mod commit_msg;
+mod report;
 use hmac::{Hmac, Mac};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -65,7 +68,10 @@ enum Commands {
     },
 
     /// Run tests according to detected stack (Cargo/npm/CMake)
-    Test,
+    Test {
+        #[command(subcommand)]
+        action: TestCmd,
+    },
 
     /// Tools (experimental): list and call
     Tool {
@@ -77,6 +83,34 @@ enum Commands {
     Context {
         #[command(subcommand)]
         action: CtxCmd,
+    },
+
+    /// Generate Conventional Commit message from staged or diff
+    CommitMsg {
+        /// Use staged changes (git diff --cached)
+        #[arg(long = "from-staged", default_value_t = true)]
+        from_staged: bool,
+        /// Or compare from this ref to HEAD
+        #[arg(long = "from-ref")]
+        from_ref: Option<String>,
+        /// Force type (feat|fix|refactor|docs|test|chore|perf|ci)
+        #[arg(long = "type")]
+        typ: Option<String>,
+        /// Force scope (path or token)
+        #[arg(long)]
+        scope: Option<String>,
+        /// Write to .git/COMMIT_EDITMSG instead of stdout
+        #[arg(long)]
+        write: bool,
+        /// Include a small body template
+        #[arg(long = "with-template")]
+        with_template: bool,
+    },
+
+    /// Export reports (SARIF / JUnit)
+    Report {
+        #[command(subcommand)]
+        kind: ReportCmd,
     },
 }
 
@@ -123,6 +157,33 @@ enum CtxCmd {
         #[arg(long = "json-out")]
         json_out: Option<PathBuf>,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum TestCmd {
+    /// Run all tests (auto-detected stack)
+    All,
+    /// Run only impacted tests based on changed files
+    Impacted {
+        /// Compare from this git ref to HEAD to detect changes (optional)
+        #[arg(long = "changed-from")]
+        changed_from: Option<String>,
+        /// Framework: auto|cargo|npm|pnpm|pytest|ctest
+        #[arg(long, default_value = "auto")]
+        framework: String,
+        /// Timeout seconds per run (default DEVIT_TIMEOUT_SECS or 300)
+        #[arg(long = "timeout-secs")]
+        timeout_secs: Option<u64>,
+        /// Max jobs/threads (hint, not all frameworks use it)
+        #[arg(long = "max-jobs")]
+        max_jobs: Option<usize>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ReportCmd {
+    Sarif,
+    Junit,
 }
 
 #[tokio::main]
@@ -299,7 +360,8 @@ async fn main() -> Result<()> {
                 anyhow::bail!("❌ Tests FAIL (exit code {code})");
             }
         }
-        Some(Commands::Test) => {
+        Some(Commands::Test { action }) => match action {
+            TestCmd::All => {
             if cfg.policy.sandbox.to_lowercase() == "read-only" {
                 anyhow::bail!(
                     "policy.sandbox=read-only: test refusé (exécution/écriture interdites)"
@@ -318,7 +380,48 @@ async fn main() -> Result<()> {
                     anyhow::bail!("Impossible d'exécuter les tests: {e}");
                 }
             }
-        }
+            }
+            TestCmd::Impacted { changed_from, framework, timeout_secs, max_jobs } => {
+                if cfg.policy.sandbox.to_lowercase() == "read-only" {
+                    anyhow::bail!(
+                        "policy.sandbox=read-only: test refusé (exécution/écriture interdites)"
+                    );
+                }
+                let opts = test_runner::ImpactedOpts { changed_from, changed_paths: None, max_jobs, framework: Some(framework), timeout_secs };
+                match test_runner::run_impacted(&opts) {
+                    Ok(rep) => {
+                        println!("{}", serde_json::to_string(&serde_json::json!({
+                            "type": "tool.result",
+                            "payload": {
+                                "ok": true,
+                                "framework": rep.framework,
+                                "ran": rep.ran,
+                                "passed": rep.passed,
+                                "failed": rep.failed,
+                                "duration_ms": rep.duration_ms,
+                                "logs_path": rep.logs_path
+                            }
+                        }))?);
+                    }
+                    Err(e) => {
+                        let s = e.to_string();
+                        if s.contains("\"timeout\":true") {
+                            println!("{}", serde_json::to_string(&serde_json::json!({
+                                "type": "tool.error",
+                                "payload": { "timeout": true }
+                            }))?);
+                            std::process::exit(124);
+                        } else {
+                            println!("{}", serde_json::to_string(&serde_json::json!({
+                                "type": "tool.error",
+                                "payload": { "tests_failed": true, "report": ".devit/reports/junit.xml" }
+                            }))?);
+                            std::process::exit(2);
+                        }
+                    }
+                }
+            }
+        },
         Some(Commands::Tool { action }) => match action {
             ToolCmd::List => {
                 let tools = serde_json::json!([
@@ -373,6 +476,27 @@ async fn main() -> Result<()> {
                     json_out.as_deref(),
                 )?;
                 println!("index écrit: {}", written.display());
+            }
+        },
+        Some(Commands::CommitMsg { from_staged, from_ref, typ, scope, write, with_template }) => {
+            let opts = commit_msg::Options { from_staged, change_from: from_ref, typ, scope, with_template };
+            let msg = commit_msg::generate(&opts)?;
+            if write {
+                let path = ".git/COMMIT_EDITMSG";
+                std::fs::write(path, msg)?;
+                println!("wrote: {}", path);
+            } else {
+                println!("{}", msg);
+            }
+        }
+        Some(Commands::Report { kind }) => match kind {
+            ReportCmd::Sarif => {
+                let p = report::sarif_latest()?;
+                println!("{}", p.display());
+            }
+            ReportCmd::Junit => {
+                let p = report::junit_latest()?;
+                println!("{}", p.display());
             }
         },
         _ => {
