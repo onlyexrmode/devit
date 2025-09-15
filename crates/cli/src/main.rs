@@ -20,6 +20,7 @@ use std::io::{stdin, Read, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 mod context;
+mod sbom;
 
 #[derive(Parser, Debug)]
 #[command(name = "devit", version, about = "DevIt CLI - patch-only agent", long_about = None)]
@@ -125,6 +126,31 @@ enum Commands {
         #[command(subcommand)]
         action: MergeCmd,
     },
+
+    /// Generate SBOM (CycloneDX JSON)
+    Sbom {
+        #[command(subcommand)]
+        action: SbomCmd,
+    },
+
+    /// Apply a patch via JSON API (parity with tool call)
+    FsPatchApply {
+        /// Read JSON from file or '-' for stdin
+        #[arg(long = "json", default_value = "-")]
+        json_input: String,
+        /// commit mode: on|off|auto
+        #[arg(long = "commit")]
+        commit: Option<String>,
+        /// precommit mode: on|off|auto
+        #[arg(long = "precommit")]
+        precommit: Option<String>,
+        /// impacted tests mode: on|off|auto
+        #[arg(long = "tests-impacted")]
+        tests_impacted: Option<String>,
+        /// attest diff enabled (default: on)
+        #[arg(long = "attest-diff", default_value_t = false)]
+        attest_diff: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -212,6 +238,16 @@ enum ReportCmd {
         #[arg(long = "sarif", default_value = ".devit/reports/sarif.json")]
         sarif: String,
         #[arg(long = "out", default_value = ".devit/reports/summary.md")]
+        out: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SbomCmd {
+    /// Generate combined SBOM and write to file
+    Gen {
+        /// Output path (default: .devit/sbom.cdx.json)
+        #[arg(long = "out", default_value = ".devit/sbom.cdx.json")]
         out: String,
     },
 }
@@ -775,6 +811,28 @@ async fn main() -> Result<()> {
                 }
             }
         },
+        Some(Commands::Sbom { action }) => match action {
+            SbomCmd::Gen { out } => {
+                let outp = std::path::Path::new(&out);
+                if let Some(dir) = outp.parent() { let _ = std::fs::create_dir_all(dir); }
+                sbom::generate(outp)?;
+                println!("{}", out);
+            }
+        },
+        Some(Commands::FsPatchApply { json_input, commit, precommit, tests_impacted, attest_diff }) => {
+            // Read JSON request (fs_patch_apply args) and merge CLI overrides
+            let mut s = String::new();
+            if json_input == "-" || json_input == "@-" { stdin().read_to_string(&mut s)?; } else { s = std::fs::read_to_string(&json_input)?; }
+            let mut req: serde_json::Value = serde_json::from_str(&s).context("parse JSON input for fs_patch_apply")?;
+            // Accept both top-level args or raw args
+            let mut args = if let Some(a) = req.get("args").cloned() { a } else { req.clone() };
+            if let Some(v) = commit { args["commit"] = serde_json::Value::String(v); }
+            if let Some(v) = precommit { args["precommit"] = serde_json::Value::String(v); }
+            if let Some(v) = tests_impacted { args["tests_impacted"] = serde_json::Value::String(v); }
+            if attest_diff { args["attest_diff"] = serde_json::Value::Bool(true); }
+            let out = tool_call_json(&cfg, "fs_patch_apply", args, true)?;
+            println!("{}", serde_json::to_string(&out)?);
+        }
         _ => {
             eprintln!(
                 "Usage:\n  devit suggest --goal \"...\" [PATH]\n  devit apply [-|PATCH.diff] [--yes] [--force]\n  devit run --goal \"...\" [PATH] [--yes] [--force]\n  devit test"

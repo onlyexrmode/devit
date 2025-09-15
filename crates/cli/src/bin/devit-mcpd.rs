@@ -21,6 +21,8 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use std::{collections::HashMap, fs};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Parser, Debug)]
@@ -71,6 +73,19 @@ struct Cli {
     /// Limite: cooldown entre appels (ms)
     #[arg(long = "cooldown-ms", default_value_t = 250)]
     cooldown_ms: u64,
+
+    /// Sandbox kind: bwrap|none (default: none)
+    #[arg(long = "sandbox", default_value = "none")]
+    sandbox: String,
+    /// Network policy: off|full (default: off)
+    #[arg(long = "net", default_value = "off")]
+    net: String,
+    /// CPU seconds limit for child processes
+    #[arg(long = "cpu-secs", default_value_t = 30)]
+    cpu_secs: u64,
+    /// Memory limit (MB) for child processes
+    #[arg(long = "mem-mb", default_value_t = 512)]
+    mem_mb: u64,
 }
 
 fn main() {
@@ -99,6 +114,11 @@ fn real_main() -> Result<()> {
         auto_yes: cli.yes,
     };
     let mut state = ServerState::new();
+    if cli.sandbox.to_ascii_lowercase() == "bwrap" && which("bwrap").is_none() {
+        // Do not exit; mark unavailable (will return structured error later)
+        state.sandbox_unavailable = true;
+    }
+    let secrets = load_secrets_allow(cli.config_path.as_ref());
 
     // --policy-dump: print effective approvals JSON and exit
     if cli.policy_dump {
@@ -628,7 +648,7 @@ fn real_main() -> Result<()> {
                         // echo allowed unless explicitly restricted
                         let text = payload
                             .get("args")
-                            .and_then(|a| a.get("text"))
+                            .and_then(|a| a.get("text").or_else(|| a.get("msg")))
                             .and_then(|v| v.as_str())
                             .unwrap_or("");
                         writeln!(
@@ -641,6 +661,10 @@ fn real_main() -> Result<()> {
                         )?;
                     }
                     "devit.tool_list" => {
+                        if state.sandbox_unavailable && cli.sandbox.to_ascii_lowercase() == "bwrap" {
+                            writeln!(stdout, "{}", json!({"type":"tool.error","payload":{"sandbox_unavailable": true, "reason":"bwrap_not_found"}}))?;
+                            continue;
+                        }
                         let bin = cli
                             .devit_bin
                             .clone()
@@ -680,7 +704,7 @@ fn real_main() -> Result<()> {
                             }
                         }
                         let start = Instant::now();
-                        match run_devit_list(&bin, timeout) {
+                        match run_devit_list_sandboxed(&bin, timeout, &cli) {
                             Ok(out) => {
                                 let dur = start.elapsed().as_millis();
                                 audit_done(&audit, name, true, dur, None);
@@ -719,11 +743,29 @@ fn real_main() -> Result<()> {
                         }
                     }
                     "devit.tool_call" => {
+                        if state.sandbox_unavailable && cli.sandbox.to_ascii_lowercase() == "bwrap" {
+                            writeln!(stdout, "{}", json!({"type":"tool.error","payload":{"sandbox_unavailable": true, "reason":"bwrap_not_found"}}))?;
+                            continue;
+                        }
                         let bin = cli
                             .devit_bin
                             .clone()
                             .unwrap_or_else(|| PathBuf::from("devit"));
                         let args_json = payload.get("args").cloned().unwrap_or(json!({}));
+                        // PR1: explicit env request denial
+                        if let Some(args_obj) = args_json.get("args").and_then(|v| v.as_object()) {
+                            if let Some(env_obj) = args_obj.get("env").and_then(|v| v.as_object()) {
+                                if let Some(denied) = first_env_denied(env_obj, &secrets) {
+                                    writeln!(
+                                        stdout,
+                                        "{}",
+                                        json!({"type":"tool.error","payload":{ "secrets_env_denied": true, "var": denied }})
+                                    )?;
+                                    stdout.flush()?;
+                                    continue;
+                                }
+                            }
+                        }
                         // Schema check: tool:string and args:object
                         match args_json.get("tool") {
                             Some(v) if v.is_string() => {}
@@ -764,7 +806,7 @@ fn real_main() -> Result<()> {
                             }
                         }
                         let start = Instant::now();
-                        match run_devit_call(&bin, &args_json, timeout) {
+                        match run_devit_call_sandboxed(&bin, &args_json, timeout, &cli) {
                             Ok(out) => {
                                 // on_failure: if DevIt reports ok=false, require approval (post)
                                 let is_fail = out
@@ -863,6 +905,32 @@ fn timeout_from_cli_env(override_secs: Option<u64>) -> Duration {
         }
     }
     Duration::from_secs(30)
+}
+
+// ---- PR1: simple secrets env allowlist loader ----
+fn load_secrets_allow(path: Option<&PathBuf>) -> Vec<String> {
+    let mut allow = vec!["PATH".to_string(), "HOME".to_string(), "RUST_BACKTRACE".to_string()];
+    let path = path.cloned().unwrap_or_else(|| PathBuf::from(".devit/devit.toml"));
+    if let Ok(s) = fs::read_to_string(&path) {
+        #[derive(serde::Deserialize, Default)]
+        struct Root { secrets: Option<SecretsSect> }
+        #[derive(serde::Deserialize, Default)]
+        struct SecretsSect { env_allow: Option<Vec<String>> }
+        if let Ok(r) = toml::from_str::<Root>(&s) {
+            if let Some(sec) = r.secrets { if let Some(v) = sec.env_allow { allow = v; } }
+        }
+    }
+    allow
+}
+
+fn first_env_denied(env_map: &serde_json::Map<String, Value>, allow: &[String]) -> Option<String> {
+    let set: std::collections::HashSet<String> = allow.iter().map(|s| s.to_ascii_uppercase()).collect();
+    for (k, _v) in env_map.iter() {
+        if !set.contains(&k.to_ascii_uppercase()) {
+            return Some(k.clone());
+        }
+    }
+    None
 }
 
 #[derive(Default)]
@@ -1228,6 +1296,7 @@ struct ServerState {
     total_calls: u64,
     total_ok: u64,
     total_err: u64,
+    sandbox_unavailable: bool,
 }
 
 impl ServerState {
@@ -1240,6 +1309,7 @@ impl ServerState {
             total_calls: 0,
             total_ok: 0,
             total_err: 0,
+            sandbox_unavailable: false,
         }
     }
     fn reset(&mut self) {
@@ -1667,15 +1737,47 @@ profile = "std"
         assert_eq!(v["tools"]["server.stats.reset"].as_str().unwrap(), "never");
     }
 }
-fn run_devit_list(bin: &PathBuf, timeout: Duration) -> Result<Value> {
-    let mut child = Command::new(bin)
-        .arg("tool")
-        .arg("list")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .with_context(|| format!("spawn {:?} tool list", bin))?;
+fn run_devit_list_sandboxed(bin: &PathBuf, timeout: Duration, cli: &Cli) -> Result<Value> {
+    // Build command possibly under bwrap; apply rlimits
+    let mut cmd = if cli.sandbox.to_ascii_lowercase() == "bwrap" {
+        let mut c = Command::new("bwrap");
+        c.arg("--unshare-user");
+        if cli.net.to_ascii_lowercase() == "off" { c.arg("--unshare-net"); }
+        c.args(["--dev","/dev"]).args(["--proc","/proc"]).arg("--die-with-parent");
+        for p in ["/usr","/bin","/sbin","/lib","/lib64","/etc"].iter() {
+            if std::path::Path::new(p).exists() { c.args(["--ro-bind", p, p]); }
+        }
+        if let Ok(cwd) = std::env::current_dir() {
+            let p = cwd.to_string_lossy().to_string();
+            c.args(["--bind", &p, &p]).args(["--chdir", &p]);
+        }
+        // Run devit directly inside bwrap
+        c.arg("--").arg(bin.as_os_str()).arg("tool").arg("list");
+        c
+    } else {
+        let mut c = Command::new(bin);
+        c.arg("tool").arg("list");
+        c
+    };
+    // stdout/stderr
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::inherit());
+    // Apply rlimits for sandbox=none using pre_exec
+    #[cfg(unix)]
+    if cli.sandbox.to_ascii_lowercase() == "none" {
+        use libc::{rlimit, RLIMIT_AS, RLIMIT_CPU};
+        let cpu = cli.cpu_secs as u64;
+        let mem = (cli.mem_mb as u64) * 1024 * 1024;
+        unsafe {
+            cmd.pre_exec(move || {
+                let r_cpu = rlimit { rlim_cur: cpu, rlim_max: cpu };
+                let r_mem = rlimit { rlim_cur: mem, rlim_max: mem };
+                if libc::setrlimit(RLIMIT_CPU, &r_cpu as *const _) != 0 { return Err(std::io::Error::new(std::io::ErrorKind::Other, "sandbox_error:rlimit_set_failed")); }
+                if libc::setrlimit(RLIMIT_AS, &r_mem as *const _) != 0 { return Err(std::io::Error::new(std::io::ErrorKind::Other, "sandbox_error:rlimit_set_failed")); }
+                Ok(())
+            });
+        }
+    }
+    let mut child = cmd.spawn().map_err(|_e| anyhow!("sandbox_error:bwrap_exec_failed")).with_context(|| format!("spawn {:?} tool list", bin))?;
 
     let mut out = child
         .stdout
@@ -1705,16 +1807,43 @@ fn run_devit_list(bin: &PathBuf, timeout: Duration) -> Result<Value> {
     }
 }
 
-fn run_devit_call(bin: &PathBuf, args_json: &Value, timeout: Duration) -> Result<Value> {
-    let mut child = Command::new(bin)
-        .arg("tool")
-        .arg("call")
-        .arg("-")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .with_context(|| format!("spawn {:?} tool call -", bin))?;
+fn run_devit_call_sandboxed(bin: &PathBuf, args_json: &Value, timeout: Duration, cli: &Cli) -> Result<Value> {
+    let mut cmd = if cli.sandbox.to_ascii_lowercase() == "bwrap" {
+        let mut c = Command::new("bwrap");
+        c.arg("--unshare-user");
+        if cli.net.to_ascii_lowercase() == "off" { c.arg("--unshare-net"); }
+        c.args(["--dev","/dev"]).args(["--proc","/proc"]).arg("--die-with-parent");
+        for p in ["/usr","/bin","/sbin","/lib","/lib64","/etc"].iter() {
+            if std::path::Path::new(p).exists() { c.args(["--ro-bind", p, p]); }
+        }
+        if let Ok(cwd) = std::env::current_dir() {
+            let p = cwd.to_string_lossy().to_string();
+            c.args(["--bind", &p, &p]).args(["--chdir", &p]);
+        }
+        c.arg("--").arg(bin.as_os_str()).arg("tool").arg("call").arg("-");
+        c
+    } else {
+        let mut c = Command::new(bin);
+        c.arg("tool").arg("call").arg("-");
+        c
+    };
+    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
+    #[cfg(unix)]
+    if cli.sandbox.to_ascii_lowercase() == "none" {
+        use libc::{rlimit, RLIMIT_AS, RLIMIT_CPU};
+        let cpu = cli.cpu_secs as u64;
+        let mem = (cli.mem_mb as u64) * 1024 * 1024;
+        unsafe {
+            cmd.pre_exec(move || {
+                let r_cpu = rlimit { rlim_cur: cpu, rlim_max: cpu };
+                let r_mem = rlimit { rlim_cur: mem, rlim_max: mem };
+                if libc::setrlimit(RLIMIT_CPU, &r_cpu as *const _) != 0 { return Err(std::io::Error::new(std::io::ErrorKind::Other, "sandbox_error:rlimit_set_failed")); }
+                if libc::setrlimit(RLIMIT_AS, &r_mem as *const _) != 0 { return Err(std::io::Error::new(std::io::ErrorKind::Other, "sandbox_error:rlimit_set_failed")); }
+                Ok(())
+            });
+        }
+    }
+    let mut child = cmd.spawn().map_err(|_e| anyhow!("sandbox_error:bwrap_exec_failed")).with_context(|| format!("spawn {:?} tool call -", bin))?;
 
     // write JSON to stdin
     {

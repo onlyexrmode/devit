@@ -316,3 +316,5 @@ Plugin WASI (si echo_sum.wasm installé) :
 ```
 echo '{"id":"echo_sum","payload":{"a":2,"b":40}}' | devit-mcp --cmd 'devit-mcpd --yes' --call plugin.invoke --json @-
 ```
+smoke llm 2025-09-15T16:19:26+02:00
+smoke llm 2025-09-15T16:41:50+02:00

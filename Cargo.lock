@@ -522,6 +522,7 @@ dependencies = [
  "hex",
  "hmac",
  "ignore",
+ "libc",
  "memmap2",
  "pathdiff",
  "rand",
