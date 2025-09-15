@@ -198,3 +198,20 @@ jobs:
         run: make lint-flags
       - name: Lint JSON errors shape
         run: scripts/lint_errors.sh
+  mini_pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --workspace
+      - name: Run mini pipeline (verbose)
+        run: |
+          chmod +x scripts/mini_patch_pipeline_verbose.sh
+          ./scripts/mini_patch_pipeline_verbose.sh
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: devit-reports
+          path: .devit/reports
