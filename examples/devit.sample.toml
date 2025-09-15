@@ -48,3 +48,9 @@ max_test_failures = 0
 max_lint_errors = 0
 allow_lint_warnings = true
 fail_on_missing_reports = false
+
+[commit]
+max_subject = 72
+default_type = "refactor"
+template_body = ".devit/commit_body.tmpl"
+scopes_alias = { "crates/cli/src/mcp" = "mcp", "crates/cli/src/context" = "context", "crates/cli/src/plugins" = "plugins", "crates/cli/src/bin" = "cli", ".github" = "ci", "docs" = "docs" }

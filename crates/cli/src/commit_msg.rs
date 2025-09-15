@@ -1,6 +1,7 @@
 use anyhow::Result;
 use std::path::Path;
 use std::process::Command;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -137,4 +138,79 @@ fn infer_subject(files: &[String], typ: &str, scope: &str) -> String {
         };
     }
     "update".into()
+}
+
+// -------- Structured API (v0.3) --------
+
+#[derive(Debug, Clone)]
+pub struct MsgInput {
+    pub staged_paths: Vec<std::path::PathBuf>,
+    pub diff_summary: Option<String>,
+    pub forced_type: Option<String>,
+    pub forced_scope: Option<String>,
+    pub max_subject: usize,
+    pub template_body: Option<String>,
+    pub scopes_alias: Option<HashMap<String, String>>, // optional alias mapping
+}
+
+#[derive(Debug, Clone)]
+pub struct MsgOutput {
+    pub ctype: String,
+    pub scope: Option<String>,
+    pub subject: String,
+    pub body: String,
+    pub footers: Vec<String>,
+}
+
+pub fn generate_struct(input: &MsgInput) -> Result<MsgOutput> {
+    let files: Vec<String> = input
+        .staged_paths
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+    let scope_auto = infer_scope(&files);
+    let scope = if let Some(s) = input.forced_scope.as_ref() {
+        if s == "auto" { Some(scope_auto) } else { Some(s.clone()) }
+    } else {
+        Some(scope_auto)
+    };
+    let scope = apply_alias(scope, input.scopes_alias.as_ref());
+    let ctype = match input.forced_type.as_deref() {
+        Some("auto") | None => infer_type(&files),
+        Some(s) => s.to_string(),
+    };
+    let subj_raw = infer_subject(&files, &ctype, scope.as_deref().unwrap_or("repo"));
+    let subject = truncate_to(subj_raw.trim_end_matches('.'), input.max_subject);
+    let body = input
+        .template_body
+        .clone()
+        .unwrap_or_else(|| String::new());
+    Ok(MsgOutput {
+        ctype,
+        scope,
+        subject,
+        body,
+        footers: Vec::new(),
+    })
+}
+
+fn apply_alias(scope: Option<String>, alias: Option<&HashMap<String, String>>) -> Option<String> {
+    let Some(mut s) = scope else { return None; };
+    if let Some(map) = alias {
+        for (prefix, name) in map.iter() {
+            if s.starts_with(prefix) || s.contains(prefix) {
+                s = name.clone();
+                break;
+            }
+        }
+    }
+    Some(s)
+}
+
+fn truncate_to(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        s.chars().take(max).collect()
+    }
 }

@@ -14,6 +14,8 @@ pub struct Config {
     pub provenance: ProvenanceCfg,
     #[serde(default)]
     pub precommit: Option<PrecommitCfg>,
+    #[serde(default)]
+    pub commit: Option<CommitCfg>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +68,20 @@ pub struct QualityCfg {
     #[serde(default)]
     pub fail_on_missing_reports: bool,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CommitCfg {
+    #[serde(default = "default_max_subject")]
+    pub max_subject: usize,
+    #[serde(default)]
+    pub scopes_alias: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub default_type: Option<String>,
+    #[serde(default)]
+    pub template_body: Option<String>,
+}
+
+fn default_max_subject() -> usize { 72 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrecommitCfg {

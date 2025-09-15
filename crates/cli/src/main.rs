@@ -939,6 +939,35 @@ fn tool_call_json(
                 .get("check_only")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+            let commit_mode = args
+                .get("commit")
+                .and_then(|v| v.as_str())
+                .unwrap_or("auto")
+                .to_lowercase();
+            let commit_type = args
+                .get("commit_type")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let commit_scope = args
+                .get("commit_scope")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let commit_body_template = args
+                .get("commit_body_template")
+                .and_then(|v| v.as_str())
+                .map(|p| std::fs::read_to_string(p).unwrap_or_default());
+            let commit_dry_run = args
+                .get("commit_dry_run")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let commit_signoff = args
+                .get("signoff")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let no_prov_footer = args
+                .get("no_provenance_footer")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             if patch.is_empty() {
                 anyhow::bail!("fs_patch_apply: champ 'patch' requis (contenu du diff)");
             }
@@ -1089,9 +1118,94 @@ fn tool_call_json(
                     }
                 }
             }
-            let attest = compute_attest_hash(patch);
-            journal_event(&Event::Attest { hash: attest })?;
-            Ok(serde_json::json!({"applied": true, "mode": mode}))
+            // Commit stage
+            let profile = cfg.policy.profile.clone().unwrap_or_else(|| "std".into()).to_lowercase();
+            let commit_default_on = matches!(profile.as_str(), "safe" | "std");
+            let commit_enabled = match commit_mode.as_str() { "on" => true, "off" => false, _ => commit_default_on };
+            // gather staged paths
+            let staged_list = std::process::Command::new("git")
+                .args(["diff", "--name-only", "--cached"])
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).lines().map(|s| s.to_string()).collect::<Vec<_>>())
+                .unwrap_or_default();
+            let staged_paths: Vec<std::path::PathBuf> = staged_list.iter().map(|s| std::path::PathBuf::from(s)).collect();
+            let max_subject = cfg.commit.as_ref().map(|c| c.max_subject).unwrap_or(72usize);
+            let template_body = match commit_body_template {
+                Some(s) => Some(s),
+                None => cfg.commit.as_ref().and_then(|c| c.template_body.as_ref()).and_then(|p| std::fs::read_to_string(p).ok()),
+            };
+            // scope alias mapping
+            let scopes_alias = cfg.commit.as_ref().map(|c| c.scopes_alias.clone());
+            let input = crate::commit_msg::MsgInput {
+                staged_paths,
+                diff_summary: None,
+                forced_type: commit_type.clone(),
+                forced_scope: commit_scope.clone(),
+                max_subject,
+                template_body,
+                scopes_alias,
+            };
+            let mut msg = crate::commit_msg::generate_struct(&input).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            // provenance footer
+            if cfg.provenance.footer && !no_prov_footer {
+                let hash = compute_attest_hash(patch);
+                msg.footers.push(format!("DevIt-Attest: {}", hash));
+                let _ = journal_event(&Event::Attest { hash });
+            }
+            let msg_path = ".git/COMMIT_EDITMSG";
+            // build commit message text
+            let subject_line = if let Some(sc) = &msg.scope {
+                format!("{}({}): {}", msg.ctype, sc, msg.subject)
+            } else {
+                format!("{}: {}", msg.ctype, msg.subject)
+            };
+            let body = msg.body.clone();
+            let foot = if msg.footers.is_empty() { String::new() } else { format!("\n{}", msg.footers.join("\n")) };
+            let full = if body.trim().is_empty() { format!("{}{}\n", subject_line, foot) } else { format!("{}\n\n{}{}\n", subject_line, body.trim(), foot) };
+            if commit_dry_run || !commit_enabled {
+                // write only if not dry-run? Spec: dry-run should not touch git; off should write.
+                if !commit_dry_run {
+                    let _ = std::fs::write(msg_path, &full);
+                }
+                return Ok(serde_json::json!({
+                    "ok": true,
+                    "committed": false,
+                    "type": msg.ctype,
+                    "scope": msg.scope,
+                    "subject": msg.subject,
+                    "msg_path": msg_path
+                }));
+            }
+            // approval for commit step (safe requires --yes)
+            if profile == "safe" && !yes {
+                anyhow::bail!(format!("{}", serde_json::json!({
+                    "approval_required": true, "policy": "on_request", "phase": "pre", "reason": "commit"
+                })));
+            }
+            // write message file
+            std::fs::write(msg_path, &full).map_err(|_| anyhow::anyhow!("commit_msg_failed: write_failed"))?;
+            // git commit
+            let mut cmd = std::process::Command::new("git");
+            cmd.args(["commit", "-F", msg_path]);
+            if commit_signoff { cmd.arg("--signoff"); }
+            let out = cmd.output().map_err(|e| anyhow::anyhow!(e))?;
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                anyhow::bail!(format!("{}", serde_json::json!({
+                    "git_commit_failed": true, "exit_code": out.status.code().unwrap_or(1), "stderr": stderr
+                })));
+            }
+            let sha = git::head_short().unwrap_or_default();
+            Ok(serde_json::json!({
+                "ok": true,
+                "committed": true,
+                "commit_sha": sha,
+                "type": msg.ctype,
+                "scope": msg.scope,
+                "subject": msg.subject,
+                "msg_path": msg_path
+            }))
         }
         "shell_exec" => {
             let cmd = args.get("cmd").and_then(|v| v.as_str()).unwrap_or("");

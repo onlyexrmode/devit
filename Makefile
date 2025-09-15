@@ -200,6 +200,10 @@ help-cli:
 	@echo "ci-cli         : check-cli + build-cli"
 	@echo "dist           : package tar.gz + sha256 (local)"
 
+.PHONY: commit-dry-run
+commit-dry-run:
+	@target/debug/devit fs_patch_apply --commit-dry-run >/dev/null && echo "OK" || echo "FAIL"
+
 # ===== MCP helpers =====
 .PHONY: build-exp run-mcpd mcp-policy mcp-health mcp-stats e2e-mcp
 build-exp:
