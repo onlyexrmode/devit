@@ -23,6 +23,20 @@ use_notes        = true
 [provenance]
 footer = true
 
+[precommit]
+# Enable/disable families (defaults true if section absent)
+rust = true
+javascript = true
+python = true
+# Extra commands executed before apply (bash -lc context)
+additional = [
+  # "bash -lc 'make lint'"
+]
+# Families that fail the gate (others are best-effort)
+fail_on = ["rust", "javascript", "python"]
+# Profiles allowed to bypass with --no-precommit (requires --yes)
+allow_bypass_profiles = ["danger"]
+
 [mcp]
 profile = "std"
 
