@@ -42,3 +42,9 @@ profile = "std"
 
 #[mcp.approvals]
 #"server.stats.reset" = "never"
+
+[quality]
+max_test_failures = 0
+max_lint_errors = 0
+allow_lint_warnings = true
+fail_on_missing_reports = false

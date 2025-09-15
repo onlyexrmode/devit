@@ -105,6 +105,40 @@ jobs:
             cargo test --workspace --all-targets --no-fail-fast
           fi
 
+      - name: Generate DevIt reports (SARIF/JUnit)
+        run: |
+          cargo run -p devit-cli --bin devit -- report sarif >/dev/null
+          cargo run -p devit-cli --bin devit -- report junit >/dev/null
+
+      - name: Aggregate quality (thresholds)
+        run: |
+          target/debug/devit quality gate --junit .devit/reports/junit.xml --sarif .devit/reports/sarif.json --json | tee .devit/reports/quality.json
+
+      - name: Upload DevIt reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: devit-reports-${{ matrix.os }}
+          path: .devit/reports
+
+      - name: Upload SARIF to GitHub Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: .devit/reports/sarif.json
+
+      - name: PR comment (DevIt Quality Summary)
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "### DevIt Quality Summary" > /tmp/devit_summary.md
+          jq -r '"- Tests: (.payload.summary.tests_failed)/(.payload.summary.tests_total) failed\n- Lint: (.payload.summary.lint_errors) errors, (.payload.summary.lint_warnings) warnings\n- Verdict: ((.payload.pass|tostring))"' .devit/reports/quality.json >> /tmp/devit_summary.md
+          gh pr comment ${{ github.event.pull_request.number }} --body-file /tmp/devit_summary.md
+
+      - name: Fail on thresholds
+        run: |
+          jq -e '.payload.pass == true' .devit/reports/quality.json >/dev/null || exit 1
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [build-test]

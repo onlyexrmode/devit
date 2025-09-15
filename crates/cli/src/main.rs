@@ -11,6 +11,7 @@ mod precommit;
 mod test_runner;
 mod commit_msg;
 mod report;
+mod merge_assist;
 use hmac::{Hmac, Mac};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -112,6 +113,18 @@ enum Commands {
         #[command(subcommand)]
         kind: ReportCmd,
     },
+
+    /// Quality gate: aggregate reports and check thresholds
+    Quality {
+        #[command(subcommand)]
+        action: QualityCmd,
+    },
+
+    /// Merge assistance (explain/apply)
+    Merge {
+        #[command(subcommand)]
+        action: MergeCmd,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -184,6 +197,46 @@ enum TestCmd {
 enum ReportCmd {
     Sarif,
     Junit,
+    /// Generate summary markdown
+    Summary {
+        #[arg(long = "junit", default_value = ".devit/reports/junit.xml")]
+        junit: String,
+        #[arg(long = "sarif", default_value = ".devit/reports/sarif.json")]
+        sarif: String,
+        #[arg(long = "out", default_value = ".devit/reports/summary.md")]
+        out: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum QualityCmd {
+    Gate {
+        #[arg(long = "junit", default_value = ".devit/reports/junit.xml")]
+        junit: String,
+        #[arg(long = "sarif", default_value = ".devit/reports/sarif.json")]
+        sarif: String,
+        /// Config path with [quality] thresholds
+        #[arg(long = "config", default_value = ".devit/devit.toml")]
+        config: String,
+        /// Print JSON summary
+        #[arg(long = "json", default_value_t = true)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum MergeCmd {
+    /// Explain merge conflicts in files (auto-detect unmerged by default)
+    Explain {
+        /// Optional target files
+        #[arg(value_delimiter = ' ')]
+        paths: Vec<String>,
+    },
+    /// Apply a resolution plan (JSON path)
+    Apply {
+        #[arg(long = "plan")]
+        plan: String,
+    },
 }
 
 #[tokio::main]
@@ -498,6 +551,58 @@ async fn main() -> Result<()> {
                 let p = report::junit_latest()?;
                 println!("{}", p.display());
             }
+            ReportCmd::Summary { junit, sarif, out } => {
+                report::summary_markdown(std::path::Path::new(&junit), std::path::Path::new(&sarif), std::path::Path::new(&out))?;
+                println!("{}", out);
+            }
+        },
+        Some(Commands::Quality { action }) => match action {
+            QualityCmd::Gate { junit, sarif, config, json: _ } => {
+                // load quality cfg
+                let cfg_text = std::fs::read_to_string(&config).unwrap_or_default();
+                let tbl: toml::Value = toml::from_str(&cfg_text).unwrap_or(toml::Value::Table(Default::default()));
+                let qcfg: devit_common::QualityCfg = tbl
+                    .get("quality")
+                    .and_then(|v| v.clone().try_into().ok())
+                    .unwrap_or_default();
+                // flaky list (optional)
+                let flaky_path = ".devit/flaky_tests.txt";
+                let flaky = std::fs::read_to_string(flaky_path).ok().map(|s| s.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect::<Vec<_>>());
+                let flaky_ref = flaky.as_ref().map(|v| v.as_slice());
+                let sum = report::summarize(std::path::Path::new(&junit), std::path::Path::new(&sarif), &qcfg, flaky_ref)?;
+                let pass = report::check_thresholds(&sum, &qcfg);
+                if pass {
+                    println!("{}", serde_json::to_string(&serde_json::json!({
+                        "type":"tool.result",
+                        "payload": { "ok": true, "summary": sum, "pass": pass }
+                    }))?);
+                    std::process::exit(0);
+                } else {
+                    println!("{}", serde_json::to_string(&serde_json::json!({
+                        "type":"tool.error",
+                        "payload": { "ok": false, "summary": sum, "pass": pass, "reason":"thresholds_exceeded" }
+                    }))?);
+                    std::process::exit(1);
+                }
+            }
+        },
+        Some(Commands::Merge { action }) => match action {
+            MergeCmd::Explain { paths } => {
+                let conf = merge_assist::explain(&paths)?;
+                println!("{}", serde_json::to_string(&serde_json::json!({
+                    "type":"tool.result",
+                    "payload": {"ok": true, "conflicts": conf}
+                }))?);
+            }
+            MergeCmd::Apply { plan } => {
+                let txt = std::fs::read_to_string(&plan).context("read plan.json")?;
+                let p: merge_assist::Plan = serde_json::from_str(&txt).context("parse plan.json")?;
+                merge_assist::apply_plan(&p).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                println!("{}", serde_json::to_string(&serde_json::json!({
+                    "type":"tool.result",
+                    "payload": {"ok": true}
+                }))?);
+            }
         },
         _ => {
             eprintln!(
@@ -717,6 +822,10 @@ fn tool_call_json(
             let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("index");
             let no_precommit = args.get("no_precommit").and_then(|v| v.as_bool()).unwrap_or(false);
             let precommit_only = args.get("precommit_only").and_then(|v| v.as_bool()).unwrap_or(false);
+            let precommit_mode = args.get("precommit").and_then(|v| v.as_str()).unwrap_or("auto").to_lowercase();
+            let tests_mode = args.get("tests_impacted").and_then(|v| v.as_str()).unwrap_or("auto").to_lowercase();
+            let tests_timeout_secs = args.get("tests_timeout_secs").and_then(|v| v.as_u64()).unwrap_or(300);
+            let allow_apply_on_tests_fail = args.get("allow_apply_on_tests_fail").and_then(|v| v.as_bool()).unwrap_or(false);
             let check_only = args
                 .get("check_only")
                 .and_then(|v| v.as_bool())
@@ -733,19 +842,35 @@ fn tool_call_json(
                     }))),
                 }
             }
-            if no_precommit {
+            // decide precommit enabled
+            let profile = cfg.policy.profile.clone().unwrap_or_else(|| "std".into()).to_lowercase();
+            let precommit_enabled = match precommit_mode.as_str() {
+                "on" => true,
+                "off" => false,
+                _ => profile != "danger",
+            };
+            if no_precommit && precommit_enabled {
                 // Bypass policy check
                 if !yes || !precommit::bypass_allowed(cfg) {
                     anyhow::bail!(format!("{}", serde_json::json!({
                         "approval_required": true, "policy": "on_request", "phase": "pre", "reason": "precommit_bypass"
                     })));
                 }
-            } else {
+            } else if precommit_enabled {
                 if let Err(f) = precommit::run(cfg) {
+                    // write precommit report
+                    let _ = std::fs::create_dir_all(".devit/reports");
+                    let _ = std::fs::write(".devit/reports/precommit.json", serde_json::to_vec(&serde_json::json!({
+                        "precommit_failed": true, "tool": f.tool, "exit_code": f.exit_code
+                    })).unwrap_or_default());
                     anyhow::bail!(format!("{}", serde_json::json!({
                         "precommit_failed": true, "tool": f.tool, "exit_code": f.exit_code, "stderr": f.stderr
                     })));
                 }
+                let _ = std::fs::create_dir_all(".devit/reports");
+                let _ = std::fs::write(".devit/reports/precommit.json", serde_json::to_vec(&serde_json::json!({
+                    "ok": true
+                })).unwrap_or_default());
             }
             git::apply_check(patch)?;
             if check_only {
@@ -761,6 +886,48 @@ fn tool_call_json(
             };
             if !ok {
                 anyhow::bail!("Échec git apply ({mode})");
+            }
+            // tests impacted pipeline
+            let tests_enabled = match tests_mode.as_str() { "on" => true, "off" => false, _ => profile != "danger" };
+            if tests_enabled {
+                let ns = git::numstat(patch).unwrap_or_default();
+                let changed: Vec<String> = ns.into_iter().map(|e| e.path).collect();
+                let opts = test_runner::ImpactedOpts { changed_from: None, changed_paths: Some(changed), max_jobs: None, framework: Some("auto".into()), timeout_secs: Some(tests_timeout_secs) };
+                match test_runner::run_impacted(&opts) {
+                    Ok(rep) => {
+                        let _ = std::fs::write(".devit/reports/impacted.json", serde_json::to_vec(&serde_json::json!({
+                            "ok": true, "framework": rep.framework, "ran": rep.ran, "failed": rep.failed, "logs_path": rep.logs_path
+                        })).unwrap_or_default());
+                        if rep.failed > 0 {
+                            if !allow_apply_on_tests_fail {
+                                // revert
+                                use std::io::Write as _;
+                                use std::process::{Command, Stdio};
+                                let mut child = Command::new("git").args(["apply","-R","-"]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().ok();
+                                let mut reverted = false;
+                                if let Some(ref mut ch) = child {
+                                    if let Some(stdin) = ch.stdin.as_mut() { let _ = stdin.write_all(patch.as_bytes()); }
+                                    if let Ok(status) = ch.wait() { reverted = status.success(); }
+                                }
+                                anyhow::bail!(format!("{}", serde_json::json!({
+                                    "tests_failed": true, "reverted": reverted, "report": ".devit/reports/junit.xml"
+                                })));
+                            } else {
+                                anyhow::bail!(format!("{}", serde_json::json!({
+                                    "tests_failed": true, "report": ".devit/reports/junit.xml"
+                                })));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let s = e.to_string();
+                        if s.contains("\"timeout\":true") {
+                            anyhow::bail!(format!("{}", serde_json::json!({"timeout": true})));
+                        } else {
+                            anyhow::bail!(format!("{}", serde_json::json!({"tests_failed": true, "report": ".devit/reports/junit.xml"})));
+                        }
+                    }
+                }
             }
             let attest = compute_attest_hash(patch);
             journal_event(&Event::Attest { hash: attest })?;
@@ -825,6 +992,18 @@ fn tool_call_legacy(cfg: &Config, name: &str, input: &str, yes: bool, no_precomm
             }
             if !git::apply_index(&patch)? {
                 anyhow::bail!("Échec git apply --index (patch-only).");
+            }
+            // run impacted tests (auto on for non-danger profiles)
+            let profile = cfg.policy.profile.clone().unwrap_or_else(|| "std".into()).to_lowercase();
+            if profile != "danger" {
+                let ns = git::numstat(&patch).unwrap_or_default();
+                let changed: Vec<String> = ns.into_iter().map(|e| e.path).collect();
+                let opts = test_runner::ImpactedOpts { changed_from: None, changed_paths: Some(changed), max_jobs: None, framework: Some("auto".into()), timeout_secs: Some(300) };
+                if let Ok(rep) = test_runner::run_impacted(&opts) {
+                    if rep.failed > 0 {
+                        anyhow::bail!(format!("{}", serde_json::json!({"tests_failed": true, "report": ".devit/reports/junit.xml"})));
+                    }
+                }
             }
             let attest = compute_attest_hash(&patch);
             journal_event(&Event::Attest { hash: attest })?;

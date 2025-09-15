@@ -55,6 +55,18 @@ pub struct ProvenanceCfg {
     pub footer: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct QualityCfg {
+    #[serde(default)]
+    pub max_test_failures: u32,
+    #[serde(default)]
+    pub max_lint_errors: u32,
+    #[serde(default = "default_true")]
+    pub allow_lint_warnings: bool,
+    #[serde(default)]
+    pub fail_on_missing_reports: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrecommitCfg {
     #[serde(default = "default_true")] 
