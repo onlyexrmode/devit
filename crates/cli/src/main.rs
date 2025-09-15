@@ -195,8 +195,16 @@ enum TestCmd {
 
 #[derive(Subcommand, Debug)]
 enum ReportCmd {
-    Sarif,
-    Junit,
+    Sarif {
+        /// Source selector (currently supports: latest)
+        #[arg(long = "from", default_value = "latest")]
+        from: String,
+    },
+    Junit {
+        /// Source selector (currently supports: latest)
+        #[arg(long = "from", default_value = "latest")]
+        from: String,
+    },
     /// Generate summary markdown
     Summary {
         #[arg(long = "junit", default_value = ".devit/reports/junit.xml")]
@@ -583,12 +591,20 @@ async fn main() -> Result<()> {
             }
         }
         Some(Commands::Report { kind }) => match kind {
-            ReportCmd::Sarif => {
-                let p = report::sarif_latest()?;
+            ReportCmd::Sarif { from } => {
+                let p = if from == "latest" {
+                    report::sarif_latest()?
+                } else {
+                    std::path::PathBuf::from(from)
+                };
                 println!("{}", p.display());
             }
-            ReportCmd::Junit => {
-                let p = report::junit_latest()?;
+            ReportCmd::Junit { from } => {
+                let p = if from == "latest" {
+                    report::junit_latest()?
+                } else {
+                    std::path::PathBuf::from(from)
+                };
                 println!("{}", p.display());
             }
             ReportCmd::Summary { junit, sarif, out } => {
