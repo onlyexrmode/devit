@@ -17,6 +17,7 @@ v0.2‑rc highlights (Confiance & interop)
 - Tools JSON I/O: `devit tool list` and `echo '{"name":...,"args":{...}}' | devit tool call -`
 - Sandboxed `shell_exec`: safe‑list + best‑effort `net=off`, output returned as JSON
 - `fs_patch_apply`: precommit gate (lint/format) + `check_only` and `mode: index|worktree`
+  - Integrated pipeline: optional impacted tests after apply; auto revert on fail (configurable)
 - Context map: `devit context map .` → `.devit/index.json` (respects .gitignore; ignores `.devit/`, `target/`, `bench/`)
 - Journal JSONL signé (HMAC) sous `.devit/journal.jsonl`; option `git.use_notes`
   - Provenance (footer/notes): activer le footer via `[provenance] footer=true`; ajouter des notes via `[git] use_notes=true`.
@@ -60,8 +61,9 @@ English (EN)
   - `[backend]`: `kind`, `base_url`, `model`, `api_key`
   - `[policy]`: `approval = untrusted|on-request|on-failure|never`, `sandbox = read-only|workspace-write|danger-full-access`
   - `[sandbox]`: limits (MVP informational)
-- `[git]`: conventions
+  - `[git]`: conventions
   - `[precommit]`: pre‑apply checks (Rust/JS/Python/extra) and bypass policy
+  - `[quality]`: thresholds for tests/lint in CI; `max_test_failures`, `max_lint_errors`, `allow_lint_warnings`, `fail_on_missing_reports`
 - Useful global flags
   - `--backend-url` / `--model` to override backend on the fly
   - `--no-sandbox` disables isolation (danger)
@@ -71,6 +73,10 @@ English (EN)
   - `devit apply [-|PATCH.diff] [--yes] [--force]` → apply + commit (respects policy)
   - `devit run --goal "..." [PATH] [--yes] [--force]` → suggest→apply→commit→test
   - `devit test` → run tests (auto‑detected stack)
+  - `devit test impacted [--changed-from <ref>] [--framework auto|cargo|npm|pytest|ctest]` → run only impacted tests
+  - `devit commit-msg [--from-staged|--from-ref <ref>] [--type <t>] [--scope <s>] [--with-template] [--write]` → Conventional Commit subject
+  - `devit report sarif|junit|summary` → ensure/export reports; `summary` writes `.devit/reports/summary.md`
+  - `devit quality gate --junit .devit/reports/junit.xml --sarif .devit/reports/sarif.json --json` → aggregate + thresholds
   - `devit tool list` → JSON description of tools
   - `echo '{"name":"shell_exec","args":{"cmd":"ls -1 | head"}}' | devit tool call -` → sandboxed shell (JSON I/O)
   - `echo '{"name":"fs_patch_apply","args":{"patch":"<DIFF>","check_only":true}}' | devit tool call -` → dry‑run patch
@@ -93,6 +99,10 @@ English (EN)
 - Logs & plan
   - JSONL: `~/.devit/logs/log.jsonl`: ToolCall, Diff, AskApproval, Info
   - `update_plan.yaml` maintained by `run` (done/failed + JUnit summary + tail)
+ - Quality gate
+   - Aggregates `.devit/reports/junit.xml` and `.devit/reports/sarif.json` with thresholds from `[quality]`
+   - CLI: `devit quality gate --json`; Summary: `devit report summary`
+   - Flaky tests: list patterns in `.devit/flaky_tests.txt` to ignore in threshold (reported separately)
 - TUI
   - `--tui` for run/apply: interactive approval (y/n/q), live logs
     - Navigation: arrows or h/j/k/l; PgUp/PgDn; 1/2/3 to select column
@@ -119,6 +129,8 @@ Français (FR)
   - `[policy]`: `approval = untrusted|on-request|on-failure|never`, `sandbox = read-only|workspace-write|danger-full-access`
   - `[sandbox]`: limites (MVP informatif)
   - `[git]`: conventions
+  - `[precommit]`: vérifs pré‑apply (Rust/JS/Python/extra) et bypass
+  - `[quality]`: seuils tests/lint pour CI; `max_test_failures`, `max_lint_errors`, `allow_lint_warnings`, `fail_on_missing_reports`
 - Flags globaux utiles
   - `--backend-url` / `--model` pour override ponctuel
   - `--no-sandbox` désactive l’isolation (danger)
@@ -128,6 +140,10 @@ Français (FR)
   - `devit apply [-|PATCH.diff] [--yes] [--force]` → applique + commit (respecte policy)
   - `devit run --goal "..." [PATH] [--yes] [--force]` → suggest→apply→commit→test
   - `devit test` → exécute les tests (stack auto)
+  - `devit test impacted [--changed-from <ref>] [--framework auto|cargo|npm|pytest|ctest]` → tests impactés uniquement
+  - `devit commit-msg [--from-staged|--from-ref <ref>] [--type <t>] [--scope <s>] [--with-template] [--write]` → Conventional Commits
+  - `devit report sarif|junit|summary` → export; `summary` écrit `.devit/reports/summary.md`
+  - `devit quality gate --junit .devit/reports/junit.xml --sarif .devit/reports/sarif.json --json` → agrégat + seuils
   - `devit tool list` → description JSON des outils
   - `echo '{"name":"shell_exec","args":{"cmd":"ls -1 | head"}}' | devit tool call -` → shell sandboxé (I/O JSON)
   - `echo '{"name":"fs_patch_apply","args":{"patch":"<DIFF>","check_only":true}}' | devit tool call -` → dry‑run du patch

@@ -49,6 +49,48 @@ Notes
 - Families not listed in `fail_on` run as best-effort (non-blocking).
 - Bypass requires `--yes` and a profile listed in `allow_bypass_profiles`.
 
+Quality Gate quick demo
+
+```
+# Produce skeleton reports
+devit report sarif >/dev/null
+devit report junit >/dev/null
+
+# Gate with defaults (thresholds from examples/devit.sample.toml)
+devit quality gate --junit .devit/reports/junit.xml --sarif .devit/reports/sarif.json --json | jq
+
+# Generate a human summary
+devit report summary
+cat .devit/reports/summary.md
+```
+
+Merge Assist quick demo
+
+```
+# Create a file with a manual conflict block
+cat > conflicted.txt <<'TXT'
+line 1
+<<<<<<< ours
+alpha
+=======
+beta
+>>>>>>> theirs
+line 2
+TXT
+
+# Explain conflicts
+devit merge explain conflicted.txt | jq
+
+# Build a trivial plan (keep_both)
+cat > plan.json <<'JSON'
+{ "conflicted.txt": [ {"hunk_index": 0, "resolution": "keep_both"} ] }
+JSON
+
+# Apply plan
+devit merge apply --plan plan.json
+cat conflicted.txt
+```
+
 Hands‑on demo (Rust repo)
 
 Create a throwaway repo with a Clippy warning, then exercise the gate.
