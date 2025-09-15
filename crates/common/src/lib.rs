@@ -81,7 +81,9 @@ pub struct CommitCfg {
     pub template_body: Option<String>,
 }
 
-fn default_max_subject() -> usize { 72 }
+fn default_max_subject() -> usize {
+    72
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrecommitCfg {

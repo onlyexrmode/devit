@@ -18,6 +18,7 @@ v0.2‑rc highlights (Confiance & interop)
 - Sandboxed `shell_exec`: safe‑list + best‑effort `net=off`, output returned as JSON
 - `fs_patch_apply`: precommit gate (lint/format) + `check_only` and `mode: index|worktree`
   - Integrated pipeline: optional impacted tests after apply; auto revert on fail (configurable)
+  - Commit stage: Conventional Commits auto-message and commit (profile/flags)
 - Context map: `devit context map .` → `.devit/index.json` (respects .gitignore; ignores `.devit/`, `target/`, `bench/`)
 - Journal JSONL signé (HMAC) sous `.devit/journal.jsonl`; option `git.use_notes`
   - Provenance (footer/notes): activer le footer via `[provenance] footer=true`; ajouter des notes via `[git] use_notes=true`.
@@ -64,6 +65,7 @@ English (EN)
   - `[git]`: conventions
   - `[precommit]`: pre‑apply checks (Rust/JS/Python/extra) and bypass policy
   - `[quality]`: thresholds for tests/lint in CI; `max_test_failures`, `max_lint_errors`, `allow_lint_warnings`, `fail_on_missing_reports`
+  - `[commit]`: Conventional Commits (max_subject, scopes_alias, default_type, template_body)
 - Useful global flags
   - `--backend-url` / `--model` to override backend on the fly
   - `--no-sandbox` disables isolation (danger)
@@ -75,8 +77,24 @@ English (EN)
   - `devit test` → run tests (auto‑detected stack)
   - `devit test impacted [--changed-from <ref>] [--framework auto|cargo|npm|pytest|ctest]` → run only impacted tests
   - `devit commit-msg [--from-staged|--from-ref <ref>] [--type <t>] [--scope <s>] [--with-template] [--write]` → Conventional Commit subject
+  - `devit commit-msg [--from-staged|--from-ref <ref>] [--type <t>] [--scope <s>] [--with-template] [--write]` → Conventional Commit subject
   - `devit report sarif|junit|summary` → ensure/export reports; `summary` writes `.devit/reports/summary.md`
   - `devit quality gate --junit .devit/reports/junit.xml --sarif .devit/reports/sarif.json --json` → aggregate + thresholds
+  
+Fs Patch Apply — integrated commit
+
+- JSON flags via `devit tool call -` (fs_patch_apply):
+  - `commit`: `auto|on|off` (default auto; safe/std=on, danger=auto)
+  - `commit_type`, `commit_scope`, `commit_body_template`, `commit_dry_run`, `signoff`, `no_provenance_footer`
+- Outputs:
+  - Success with commit: `{ ok:true, committed:true, commit_sha, type, scope, subject, msg_path }`
+  - Success without commit (off/dry-run): `{ ok:true, committed:false, type, scope, subject, msg_path }`
+  - Errors: `approval_required` (commit stage) or `git_commit_failed`
+- Provenance: adds “DevIt-Attest: …” footer if enabled (can be disabled per-call).
+
+Run — commit message
+
+- `devit run` uses the same generator (auto scope + alias, heuristic type) and preserves provenance footer when enabled.
   - `devit tool list` → JSON description of tools
   - `echo '{"name":"shell_exec","args":{"cmd":"ls -1 | head"}}' | devit tool call -` → sandboxed shell (JSON I/O)
   - `echo '{"name":"fs_patch_apply","args":{"patch":"<DIFF>","check_only":true}}' | devit tool call -` → dry‑run patch

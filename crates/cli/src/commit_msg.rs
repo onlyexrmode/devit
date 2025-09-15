@@ -1,7 +1,7 @@
 use anyhow::Result;
+use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
-use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -145,6 +145,7 @@ fn infer_subject(files: &[String], typ: &str, scope: &str) -> String {
 #[derive(Debug, Clone)]
 pub struct MsgInput {
     pub staged_paths: Vec<std::path::PathBuf>,
+    #[allow(dead_code)]
     pub diff_summary: Option<String>,
     pub forced_type: Option<String>,
     pub forced_scope: Option<String>,
@@ -170,7 +171,11 @@ pub fn generate_struct(input: &MsgInput) -> Result<MsgOutput> {
         .collect();
     let scope_auto = infer_scope(&files);
     let scope = if let Some(s) = input.forced_scope.as_ref() {
-        if s == "auto" { Some(scope_auto) } else { Some(s.clone()) }
+        if s == "auto" {
+            Some(scope_auto)
+        } else {
+            Some(s.clone())
+        }
     } else {
         Some(scope_auto)
     };
@@ -181,10 +186,7 @@ pub fn generate_struct(input: &MsgInput) -> Result<MsgOutput> {
     };
     let subj_raw = infer_subject(&files, &ctype, scope.as_deref().unwrap_or("repo"));
     let subject = truncate_to(subj_raw.trim_end_matches('.'), input.max_subject);
-    let body = input
-        .template_body
-        .clone()
-        .unwrap_or_else(|| String::new());
+    let body = input.template_body.clone().unwrap_or_default();
     Ok(MsgOutput {
         ctype,
         scope,
@@ -195,7 +197,7 @@ pub fn generate_struct(input: &MsgInput) -> Result<MsgOutput> {
 }
 
 fn apply_alias(scope: Option<String>, alias: Option<&HashMap<String, String>>) -> Option<String> {
-    let Some(mut s) = scope else { return None; };
+    let mut s = scope?;
     if let Some(map) = alias {
         for (prefix, name) in map.iter() {
             if s.starts_with(prefix) || s.contains(prefix) {
