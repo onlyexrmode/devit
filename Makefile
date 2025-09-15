@@ -13,7 +13,7 @@ PLUGINS_DIR ?= .devit/plugins
 
 .PHONY: fmt fmt-check fmt-fix clippy lint test test-cli build build-release smoke ci check verify help \
         build-cli run-cli release-cli check-cli ci-cli help-cli plugin-echo-sum plugin-echo-sum-run \
-        lint-flags
+        e2e-plugin lint-flags
 
 help:
 	@echo "Targets: fmt | fmt-check | fmt-fix | clippy | lint | test | test-cli | build | build-release | smoke | check | verify | ci"
@@ -208,6 +208,9 @@ e2e-mcp:
 	kill $$(cat .devit/mcpd.pid) 2>/dev/null || true; \
 	rm -f .devit/mcpd.pid; \
 	echo "E2E MCP: OK"
+
+e2e-plugin:
+	@bash scripts/e2e_plugin.sh
 
 # ===== Plugins (WASM/WASI) helpers =====
 
