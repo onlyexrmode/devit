@@ -11,9 +11,9 @@ DEVIT_BIN ?= devit
 DEVIT_BIN_NAME := $(notdir $(DEVIT_BIN))
 PLUGINS_DIR ?= .devit/plugins
 
-.PHONY: fmt fmt-check fmt-fix clippy lint test test-cli build build-release smoke ci check verify help \
+.PHONY: fmt fmt-check fmt-fix clippy lint lint-all test test-cli build build-release smoke ci ci-local check verify help \
         build-cli run-cli release-cli check-cli ci-cli help-cli plugin-echo-sum plugin-echo-sum-run \
-        e2e-plugin lint-flags test-impacted
+        e2e-plugin lint-flags test-impacted clean clean-reports clean-artifacts reports
 
 help:
 	@echo "Targets: fmt | fmt-check | fmt-fix | clippy | lint | test | test-cli | build | build-release | smoke | check | verify | ci"
@@ -120,6 +120,23 @@ reports:
 	@cargo run -p $(DEVIT_PKG) --bin $(DEVIT_BIN_NAME) -- report sarif >/dev/null
 	@cargo run -p $(DEVIT_PKG) --bin $(DEVIT_BIN_NAME) -- report junit >/dev/null
 	@ls -lah .devit/reports || true
+
+lint-all: lint lint-flags
+	@bash scripts/lint_errors.sh
+
+clean:
+	cargo clean
+
+clean-reports:
+	rm -rf .devit/reports
+
+clean-artifacts:
+	rm -rf .devit/reports .devit/merge_backups dist bench/workspaces bench/.venv bench/predictions.jsonl bench/bench_logs || true
+
+ci-local: verify reports
+	@cargo run -p $(DEVIT_PKG) --bin $(DEVIT_BIN_NAME) -- quality gate --json \
+	  --junit .devit/reports/junit.xml --sarif .devit/reports/sarif.json | tee .devit/reports/quality.json
+	@echo "ci-local: OK"
 
 # Lint flags (kebab-case only + expected flags present)
 lint-flags:
