@@ -467,6 +467,24 @@ fn compute_attest_hash(patch: &str) -> String {
     hex::encode(out)
 }
 
+fn compute_call_attest(tool: &str, args: &serde_json::Value) -> Result<String> {
+    // HMAC(tool_name, sha256(args_json), timestamp_ms)
+    let ts_ms: u128 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let args_json = serde_json::to_string(args)?;
+    let mut hasher = Sha256::new();
+    hasher.update(args_json.as_bytes());
+    let args_sha = hex::encode(hasher.finalize());
+    let key = hmac_key()?;
+    type HmacSha256 = Hmac<Sha256>;
+    let mut mac = HmacSha256::new_from_slice(&key).expect("HMAC key");
+    let material = format!("{}:{}:{}", tool, args_sha, ts_ms);
+    mac.update(material.as_bytes());
+    Ok(hex::encode(mac.finalize().into_bytes()))
+}
+
 fn ensure_devit_dir() -> Result<PathBuf> {
     let p = Path::new(".devit");
     if !p.exists() {
@@ -602,6 +620,10 @@ fn tool_call_json(
                 anyhow::bail!("Annulé par l'utilisateur.");
             }
             let (code, out) = sandbox::run_shell_sandboxed_capture(cmd, &cfg.policy, &cfg.sandbox)?;
+            // provenance: attest shell_exec call (tool+args+ts)
+            if let Ok(hash) = compute_call_attest("shell_exec", &args) {
+                let _ = journal_event(&Event::Attest { hash });
+            }
             Ok(serde_json::json!({"exit_code": code, "output": out}))
         }
         _ => anyhow::bail!(format!("outil inconnu: {name}")),
@@ -642,6 +664,10 @@ fn tool_call_legacy(cfg: &Config, name: &str, input: &str, yes: bool) -> Result<
             let code = sandbox::run_shell_sandboxed(&cmd, &cfg.policy, &cfg.sandbox)?;
             if code != 0 {
                 anyhow::bail!(format!("shell_exec exit code {code}"));
+            }
+            // provenance: attest shell_exec legacy call
+            if let Ok(hash) = compute_call_attest("shell_exec", &serde_json::json!({"cmd": cmd})) {
+                let _ = journal_event(&Event::Attest { hash });
             }
             Ok(())
         }
