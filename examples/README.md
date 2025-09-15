@@ -91,6 +91,44 @@ devit merge apply --plan plan.json
 cat conflicted.txt
 ```
 
+Commit generator (fs_patch_apply) — dry‑run and forced commit
+
+```
+# 1) Create a temp repo and config
+TMP=$(mktemp -d) && cd "$TMP"
+git init -q
+cat > devit.toml <<'CFG'
+[backend]
+kind = "openai_like"
+base_url = ""
+model = ""
+api_key = ""
+
+[policy]
+approval = "on_request"
+sandbox  = "workspace-write"
+
+[commit]
+max_subject = 72
+default_type = "refactor"
+CFG
+
+# 2) Add a file and commit
+echo "hello" > hello.txt
+git add -A && git commit -qm init
+
+# 3) Change the file and produce a patch
+echo "world" >> hello.txt
+git diff -U0 > PATCH.diff
+
+# 4) Dry-run: generate Conventional Commit subject without committing
+cat PATCH.diff  | jq -Rs '{name:"fs_patch_apply", args:{patch:., commit_dry_run:true}}'  | devit tool call - | jq '{ok:.ok,committed:.committed,subject:.subject}'
+
+# 5) Forced commit type/scope (requires approval or --yes depending on profile)
+cat PATCH.diff  | jq -Rs '{name:"fs_patch_apply", args:{patch:., commit:"on", commit_type:"fix", commit_scope:"cli"}}'  | devit tool call - --yes | jq '{committed:.committed,sha:.commit_sha,type:.type,scope:.scope,subject:.subject}'
+```
+
+
 Hands‑on demo (Rust repo)
 
 Create a throwaway repo with a Clippy warning, then exercise the gate.
