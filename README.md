@@ -47,6 +47,12 @@ Plugins (WASM/WASI)
   - Timeouts: `DEVIT_TIMEOUT_SECS` (default 30s). Timeout exit code: 124.
 
 English (EN)
+Security & Supply‑chain (v0.4)
+- Secrets redaction (MCP): enable `--secrets-scan` (or `[secrets].scan=true`), configure `placeholder` and `patterns` in `.devit/devit.toml`.
+- Sandbox: `--sandbox bwrap|none`, `--net off|full`, `--cpu-secs`, `--mem-mb` (recommended defaults: bwrap + net off when available).
+- SBOM CycloneDX: `devit sbom gen --out .devit/sbom.cdx.json` (audit sha256 in `.devit/journal.jsonl`).
+- Attestation (SLSA‑lite): JSONL under `.devit/attestations/YYYYMMDD/attest.jsonl`; CLI `--attest-diff|--no-attest-diff`.
+- Robust JSON I/O: `devit tool call - --json-only`; MCPD parses the last valid JSON and exposes `child_invalid_json` when needed; raw dumps via `--child-dump-dir`.
 - Quickstart
   - Start a local OpenAI‑compatible LLM (LM Studio endpoint, or Ollama /v1).
   - Keep `devit.toml` (defaults: approval=untrusted, sandbox=read-only, net off).

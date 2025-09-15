@@ -1,5 +1,19 @@
 # RELEASE_NOTES.md
 
+## v0.4.0-rc.1
+
+Sécurité & Observabilité
+- Redaction centrale des secrets (MCP): `--secrets-scan`, `--redact-placeholder`; patterns configurables via `.devit/devit.toml`.
+- Sandbox: `--sandbox bwrap|none`, `--net off|full`, limites `--cpu-secs`/`--mem-mb`; erreurs structurées (`sandbox_unavailable`, `bwrap_exec_failed`, `rlimit_set_failed`).
+
+Supply chain
+- SBOM CycloneDX: `devit sbom gen --out .devit/sbom.cdx.json` + audit SHA256 dans `.devit/journal.jsonl`.
+- Attestation diff (SLSA‑lite): JSONL signé sous `.devit/attestations/YYYYMMDD/attest.jsonl`; CLI `--attest-diff|--no-attest-diff`.
+
+I/O JSON robustes
+- DevIt CLI: `devit tool call - --json-only` (stdout strictement JSON, logs → stderr).
+- MCPD: input via stdin, parse “dernière valeur JSON valide”, `child_invalid_json` sinon; option debug `--child-dump-dir`.
+
 ## v0.3.0
 
 Highlights
