@@ -18,3 +18,4 @@ examples/plugins/**/target/
 dist/**
 .prompt_ne_pach_commit_gitignore_me
 examples/plugins/**/target/
+/AGENTS.md

@@ -15,8 +15,17 @@ echo "$out" | rg '"dry_run":\s*true' >/dev/null
 out=$(target/debug/devit-mcp --cmd "$SRV" --call devit.tool_call --json '{}' || true)
 echo "$out" | rg '"approval_required":\s*true' >/dev/null || true
 
-# rate-limit cooldown
-out=$(target/debug/devit-mcp --cmd "$SRV --cooldown-ms 1000" --call devit.tool_list --json '{}' >/dev/null; target/debug/devit-mcp --cmd "$SRV --cooldown-ms 1000" --call devit.tool_list --json '{}' || true)
+# rate-limit cooldown (reuse single devit-mcpd over stdio)
+out=$(
+  cat <<'JSON' |
+{"type":"ping"}
+{"type":"version","payload":{"client":"lint_errors.sh"}}
+{"type":"capabilities"}
+{"type":"tool.call","payload":{"name":"devit.tool_list","args":{}}}
+{"type":"tool.call","payload":{"name":"devit.tool_list","args":{}}}
+JSON
+  target/debug/devit-mcpd --yes --devit-bin target/debug/devit --cooldown-ms 1000
+) || true
 echo "$out" | rg '"rate_limited":\s*true' >/dev/null
 
 # watchdog max-runtime-secs
