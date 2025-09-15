@@ -245,6 +245,11 @@ enum MergeCmd {
         #[arg(long = "plan")]
         plan: String,
     },
+    /// One-shot resolve: explain -> auto plan -> apply
+    Resolve {
+        #[arg(long = "strategy", default_value = "auto")]
+        strategy: String,
+    },
 }
 
 #[tokio::main]
@@ -420,6 +425,18 @@ async fn main() -> Result<()> {
                 scopes_alias,
             };
             let mut msg = crate::commit_msg::generate_struct(&input)?;
+            // Optional LLM subject synthesis (2s timeout; fallback heuristic)
+            if msg.subject.trim().is_empty() || msg.subject.len() < 12 {
+                let diff_head = patch.lines().take(120).collect::<Vec<_>>().join("\n");
+                let fut = agent.commit_message(&goal, &summary, &diff_head);
+                if let Ok(Ok(s)) =
+                    tokio::time::timeout(std::time::Duration::from_secs(2), fut).await
+                {
+                    if !s.trim().is_empty() {
+                        msg.subject = s.trim().to_string();
+                    }
+                }
+            }
             if cfg.provenance.footer {
                 let attest = compute_attest_hash(&patch);
                 msg.footers.push(format!("DevIt-Attest: {}", attest));
@@ -733,6 +750,29 @@ async fn main() -> Result<()> {
                         "payload": {"ok": true}
                     }))?
                 );
+            }
+            MergeCmd::Resolve { strategy: _ } => {
+                let conf = merge_assist::explain(&Vec::new())?;
+                if conf.is_empty() {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&serde_json::json!({
+                            "type":"tool.result",
+                            "payload": {"ok": true, "resolved": false, "reason": "no_conflict"}
+                        }))?
+                    );
+                } else {
+                    let plan = merge_assist::propose_auto(&conf);
+                    let files = plan.len() as u32;
+                    merge_assist::apply_plan(&plan).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                    println!(
+                        "{}",
+                        serde_json::to_string(&serde_json::json!({
+                            "type":"tool.result",
+                            "payload": {"ok": true, "resolved": true, "files": files, "backups_dir": ".devit/merge_backups"}
+                        }))?
+                    );
+                }
             }
         },
         _ => {
@@ -1213,6 +1253,24 @@ fn tool_call_json(
             };
             let mut msg = crate::commit_msg::generate_struct(&input)
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            // Optional LLM subject synthesis (2s timeout; fallback heuristic)
+            if msg.subject.trim().is_empty() || msg.subject.len() < 12 {
+                let ns = git::numstat(patch).unwrap_or_default();
+                let files = ns.len();
+                let added: u64 = ns.iter().map(|e| e.added).sum();
+                let deleted: u64 = ns.iter().map(|e| e.deleted).sum();
+                let summary_llm = format!("{} file(s), +{}, -{}", files, added, deleted);
+                let diff_head = patch.lines().take(120).collect::<Vec<_>>().join("\n");
+                let agent = devit_agent::Agent::new(cfg.clone());
+                let fut = agent.commit_message("", &summary_llm, &diff_head);
+                if let Ok(Ok(s)) = tokio::runtime::Handle::current().block_on(async {
+                    tokio::time::timeout(std::time::Duration::from_secs(2), fut).await
+                }) {
+                    if !s.trim().is_empty() {
+                        msg.subject = s.trim().to_string();
+                    }
+                }
+            }
             // provenance footer
             if cfg.provenance.footer && !no_prov_footer {
                 let hash = compute_attest_hash(patch);
@@ -1242,6 +1300,19 @@ fn tool_call_json(
                 if !commit_dry_run {
                     let _ = std::fs::write(msg_path, &full);
                 }
+                // Write commit_meta.json for PR summary enrichment
+                let _ = std::fs::create_dir_all(".devit/reports");
+                let meta = serde_json::json!({
+                    "subject": msg.subject,
+                    "type": msg.ctype,
+                    "scope": msg.scope,
+                    "committed": false,
+                    "sha": serde_json::Value::Null
+                });
+                let _ = std::fs::write(
+                    ".devit/reports/commit_meta.json",
+                    serde_json::to_vec(&meta).unwrap_or_default(),
+                );
                 return Ok(serde_json::json!({
                     "ok": true,
                     "committed": false,
@@ -1280,6 +1351,19 @@ fn tool_call_json(
                 ));
             }
             let sha = git::head_short().unwrap_or_default();
+            // Write commit_meta.json reflecting committed SHA
+            let _ = std::fs::create_dir_all(".devit/reports");
+            let meta = serde_json::json!({
+                "subject": msg.subject,
+                "type": msg.ctype,
+                "scope": msg.scope,
+                "committed": true,
+                "sha": sha
+            });
+            let _ = std::fs::write(
+                ".devit/reports/commit_meta.json",
+                serde_json::to_vec(&meta).unwrap_or_default(),
+            );
             Ok(serde_json::json!({
                 "ok": true,
                 "committed": true,

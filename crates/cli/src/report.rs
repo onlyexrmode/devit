@@ -191,6 +191,32 @@ pub fn summary_markdown(junit: &Path, sarif: &Path, out: &Path) -> Result<()> {
     let sum = summarize(junit, sarif, &q, None)?;
     let mut md = String::new();
     md.push_str("# DevIt Summary\n\n");
+    // Commit proposed (if available)
+    if let Ok(s) = std::fs::read_to_string(".devit/reports/commit_meta.json") {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+            let ctype = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
+            let subject = v.get("subject").and_then(|x| x.as_str()).unwrap_or("");
+            let scope = v.get("scope").and_then(|x| x.as_str());
+            let committed = v
+                .get("committed")
+                .and_then(|x| x.as_bool())
+                .unwrap_or(false);
+            let sha = v.get("sha").and_then(|x| x.as_str()).unwrap_or("");
+            let line = match scope {
+                Some(sc) if !sc.is_empty() => format!("{}({}): {}", ctype, sc, subject),
+                _ => format!("{}: {}", ctype, subject),
+            };
+            md.push_str(&format!("Commit proposé: {}\n", line));
+            md.push_str(&format!(
+                "SHA: {}\n\n",
+                if committed && !sha.is_empty() {
+                    sha
+                } else {
+                    "pending"
+                }
+            ));
+        }
+    }
     // Pre-commit not tracked here; keep placeholder
     md.push_str("- Pre-commit: n/a\n");
     md.push_str(&format!(

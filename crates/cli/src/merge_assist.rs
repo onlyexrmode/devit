@@ -108,6 +108,28 @@ pub fn propose_minimal(conflicts: &[FileConflicts]) -> Plan {
     plan
 }
 
+pub fn propose_auto(conflicts: &[FileConflicts]) -> Plan {
+    let mut plan = Plan::new();
+    for fc in conflicts {
+        let mut items = Vec::new();
+        for (idx, h) in fc.hunks.iter().enumerate() {
+            let ours_n = h.ours.trim();
+            let theirs_n = h.theirs.trim();
+            let resolution = if ours_n == theirs_n {
+                "ours"
+            } else {
+                "keep_both"
+            };
+            items.push(ResolutionItem {
+                hunk_index: idx,
+                resolution: resolution.into(),
+            });
+        }
+        plan.insert(fc.path.clone(), items);
+    }
+    plan
+}
+
 pub fn apply_plan(plan: &Plan) -> Result<()> {
     for (path, items) in plan.iter() {
         let s = fs::read_to_string(path)?;
@@ -157,7 +179,8 @@ pub fn apply_plan(plan: &Plan) -> Result<()> {
                         if !out.is_empty() {
                             out.push('\n');
                         }
-                        out.push_str(&format!("{}\n{}", ours, theirs));
+                        // keep both with a simple separator for clarity
+                        out.push_str(&format!("{}\n// --- theirs ---\n{}", ours, theirs));
                     }
                 }
                 i = end + 1;
