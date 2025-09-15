@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+// no anyhow import needed here
 use devit_common::{Config, PrecommitCfg};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -19,7 +19,9 @@ fn timeout() -> Duration {
     Duration::from_secs(secs)
 }
 
-fn exists(p: &str) -> bool { Path::new(p).exists() }
+fn exists(p: &str) -> bool {
+    Path::new(p).exists()
+}
 
 fn has_prettier_config() -> bool {
     let candidates = [
@@ -33,7 +35,11 @@ fn has_prettier_config() -> bool {
         "prettier.config.cjs",
         "package.json",
     ];
-    for c in candidates { if exists(c) { return true; } }
+    for c in candidates {
+        if exists(c) {
+            return true;
+        }
+    }
     false
 }
 
@@ -44,7 +50,11 @@ fn run_with_timeout(cmd: &str, tool_label: &str) -> std::result::Result<(), Prec
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| PrecommitFailure { tool: tool_label.into(), exit_code: 127, stderr: e.to_string() })?;
+        .map_err(|e| PrecommitFailure {
+            tool: tool_label.into(),
+            exit_code: 127,
+            stderr: e.to_string(),
+        })?;
     let t0 = Instant::now();
     let to = timeout();
     while t0.elapsed() < to {
@@ -56,9 +66,14 @@ fn run_with_timeout(cmd: &str, tool_label: &str) -> std::result::Result<(), Prec
                     let code = status.code().unwrap_or(1);
                     let mut stderr = String::new();
                     if let Some(mut s) = child.stderr.take() {
-                        use std::io::Read; let _ = s.read_to_string(&mut stderr);
+                        use std::io::Read;
+                        let _ = s.read_to_string(&mut stderr);
                     }
-                    return Err(PrecommitFailure { tool: tool_label.into(), exit_code: code, stderr });
+                    return Err(PrecommitFailure {
+                        tool: tool_label.into(),
+                        exit_code: code,
+                        stderr,
+                    });
                 }
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(50)),
@@ -66,7 +81,11 @@ fn run_with_timeout(cmd: &str, tool_label: &str) -> std::result::Result<(), Prec
         }
     }
     let _ = child.kill();
-    Err(PrecommitFailure { tool: tool_label.into(), exit_code: 124, stderr: "timeout".into() })
+    Err(PrecommitFailure {
+        tool: tool_label.into(),
+        exit_code: 124,
+        stderr: "timeout".into(),
+    })
 }
 
 fn cfg_or_default(cfg: &Config) -> PrecommitCfg {
@@ -84,8 +103,28 @@ pub fn run(cfg: &Config) -> std::result::Result<(), PrecommitFailure> {
     let pc = cfg_or_default(cfg);
     // Rust
     if pc.rust && exists("Cargo.toml") {
-        run_with_timeout("cargo fmt --all -- --check", "fmt").map_err(|e| if pc.fail_on.contains(&"rust".into()) { e } else { PrecommitFailure { tool: e.tool, exit_code: 0, stderr: e.stderr } })?;
-        run_with_timeout("cargo clippy --all-targets -- -D warnings", "clippy").map_err(|e| if pc.fail_on.contains(&"rust".into()) { e } else { PrecommitFailure { tool: e.tool, exit_code: 0, stderr: e.stderr } })?;
+        run_with_timeout("cargo fmt --all -- --check", "fmt").map_err(|e| {
+            if pc.fail_on.contains(&"rust".into()) {
+                e
+            } else {
+                PrecommitFailure {
+                    tool: e.tool,
+                    exit_code: 0,
+                    stderr: e.stderr,
+                }
+            }
+        })?;
+        run_with_timeout("cargo clippy --all-targets -- -D warnings", "clippy").map_err(|e| {
+            if pc.fail_on.contains(&"rust".into()) {
+                e
+            } else {
+                PrecommitFailure {
+                    tool: e.tool,
+                    exit_code: 0,
+                    stderr: e.stderr,
+                }
+            }
+        })?;
     }
     // JS/TS
     if pc.javascript && exists("package.json") {
@@ -122,7 +161,10 @@ pub fn run(cfg: &Config) -> std::result::Result<(), PrecommitFailure> {
     // C/C++
     if exists("CMakeLists.txt") {
         // best-effort, non-blocking by default
-        let _ = run_with_timeout("command -v cmake-lint >/dev/null 2>&1 && cmake-lint || true", "cmake-lint");
+        let _ = run_with_timeout(
+            "command -v cmake-lint >/dev/null 2>&1 && cmake-lint || true",
+            "cmake-lint",
+        );
     }
     // Additional
     for (i, cmd) in pc.additional.iter().enumerate() {
@@ -140,7 +182,13 @@ pub fn run(cfg: &Config) -> std::result::Result<(), PrecommitFailure> {
 
 pub fn bypass_allowed(cfg: &Config) -> bool {
     let pc = cfg_or_default(cfg);
-    let profile = cfg.policy.profile.clone().unwrap_or_else(|| "std".into()).to_lowercase();
-    pc.allow_bypass_profiles.iter().any(|p| p.to_lowercase() == profile)
+    let profile = cfg
+        .policy
+        .profile
+        .clone()
+        .unwrap_or_else(|| "std".into())
+        .to_lowercase();
+    pc.allow_bypass_profiles
+        .iter()
+        .any(|p| p.to_lowercase() == profile)
 }
-

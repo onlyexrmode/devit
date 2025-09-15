@@ -7,11 +7,11 @@ use devit_agent::Agent;
 use devit_common::{Config, Event, PolicyCfg};
 use devit_sandbox as sandbox;
 use devit_tools::{codeexec, git};
-mod precommit;
-mod test_runner;
 mod commit_msg;
-mod report;
 mod merge_assist;
+mod precommit;
+mod report;
+mod test_runner;
 use hmac::{Hmac, Mac};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -415,60 +415,80 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Test { action }) => match action {
             TestCmd::All => {
-            if cfg.policy.sandbox.to_lowercase() == "read-only" {
-                anyhow::bail!(
-                    "policy.sandbox=read-only: test refusé (exécution/écriture interdites)"
-                );
-            }
-            match codeexec::run_tests_with_output() {
-                Ok((code, out)) => {
-                    println!("{}", out);
-                    if code == 0 {
-                        println!("✅ Tests PASS");
-                    } else {
-                        anyhow::bail!("❌ Tests FAIL (exit code {code})");
-                    }
-                }
-                Err(e) => {
-                    anyhow::bail!("Impossible d'exécuter les tests: {e}");
-                }
-            }
-            }
-            TestCmd::Impacted { changed_from, framework, timeout_secs, max_jobs } => {
                 if cfg.policy.sandbox.to_lowercase() == "read-only" {
                     anyhow::bail!(
                         "policy.sandbox=read-only: test refusé (exécution/écriture interdites)"
                     );
                 }
-                let opts = test_runner::ImpactedOpts { changed_from, changed_paths: None, max_jobs, framework: Some(framework), timeout_secs };
+                match codeexec::run_tests_with_output() {
+                    Ok((code, out)) => {
+                        println!("{}", out);
+                        if code == 0 {
+                            println!("✅ Tests PASS");
+                        } else {
+                            anyhow::bail!("❌ Tests FAIL (exit code {code})");
+                        }
+                    }
+                    Err(e) => {
+                        anyhow::bail!("Impossible d'exécuter les tests: {e}");
+                    }
+                }
+            }
+            TestCmd::Impacted {
+                changed_from,
+                framework,
+                timeout_secs,
+                max_jobs,
+            } => {
+                if cfg.policy.sandbox.to_lowercase() == "read-only" {
+                    anyhow::bail!(
+                        "policy.sandbox=read-only: test refusé (exécution/écriture interdites)"
+                    );
+                }
+                let opts = test_runner::ImpactedOpts {
+                    changed_from,
+                    changed_paths: None,
+                    max_jobs,
+                    framework: Some(framework),
+                    timeout_secs,
+                };
                 match test_runner::run_impacted(&opts) {
                     Ok(rep) => {
-                        println!("{}", serde_json::to_string(&serde_json::json!({
-                            "type": "tool.result",
-                            "payload": {
-                                "ok": true,
-                                "framework": rep.framework,
-                                "ran": rep.ran,
-                                "passed": rep.passed,
-                                "failed": rep.failed,
-                                "duration_ms": rep.duration_ms,
-                                "logs_path": rep.logs_path
-                            }
-                        }))?);
+                        println!(
+                            "{}",
+                            serde_json::to_string(&serde_json::json!({
+                                "type": "tool.result",
+                                "payload": {
+                                    "ok": true,
+                                    "framework": rep.framework,
+                                    "ran": rep.ran,
+                                    "passed": rep.passed,
+                                    "failed": rep.failed,
+                                    "duration_ms": rep.duration_ms,
+                                    "logs_path": rep.logs_path
+                                }
+                            }))?
+                        );
                     }
                     Err(e) => {
                         let s = e.to_string();
                         if s.contains("\"timeout\":true") {
-                            println!("{}", serde_json::to_string(&serde_json::json!({
-                                "type": "tool.error",
-                                "payload": { "timeout": true }
-                            }))?);
+                            println!(
+                                "{}",
+                                serde_json::to_string(&serde_json::json!({
+                                    "type": "tool.error",
+                                    "payload": { "timeout": true }
+                                }))?
+                            );
                             std::process::exit(124);
                         } else {
-                            println!("{}", serde_json::to_string(&serde_json::json!({
-                                "type": "tool.error",
-                                "payload": { "tests_failed": true, "report": ".devit/reports/junit.xml" }
-                            }))?);
+                            println!(
+                                "{}",
+                                serde_json::to_string(&serde_json::json!({
+                                    "type": "tool.error",
+                                    "payload": { "tests_failed": true, "report": ".devit/reports/junit.xml" }
+                                }))?
+                            );
                             std::process::exit(2);
                         }
                     }
@@ -483,7 +503,13 @@ async fn main() -> Result<()> {
                 ]);
                 println!("{}", serde_json::to_string_pretty(&tools).unwrap());
             }
-            ToolCmd::Call { name, input, yes, no_precommit, precommit_only } => {
+            ToolCmd::Call {
+                name,
+                input,
+                yes,
+                no_precommit,
+                precommit_only,
+            } => {
                 if name == "-" {
                     let mut s = String::new();
                     stdin().lock().read_to_string(&mut s)?;
@@ -506,7 +532,8 @@ async fn main() -> Result<()> {
                         ),
                     }
                 } else {
-                    let out = tool_call_legacy(&cfg, &name, &input, yes, no_precommit, precommit_only);
+                    let out =
+                        tool_call_legacy(&cfg, &name, &input, yes, no_precommit, precommit_only);
                     if let Err(e) = out {
                         anyhow::bail!(e);
                     }
@@ -531,8 +558,21 @@ async fn main() -> Result<()> {
                 println!("index écrit: {}", written.display());
             }
         },
-        Some(Commands::CommitMsg { from_staged, from_ref, typ, scope, write, with_template }) => {
-            let opts = commit_msg::Options { from_staged, change_from: from_ref, typ, scope, with_template };
+        Some(Commands::CommitMsg {
+            from_staged,
+            from_ref,
+            typ,
+            scope,
+            write,
+            with_template,
+        }) => {
+            let opts = commit_msg::Options {
+                from_staged,
+                change_from: from_ref,
+                typ,
+                scope,
+                with_template,
+            };
             let msg = commit_msg::generate(&opts)?;
             if write {
                 let path = ".git/COMMIT_EDITMSG";
@@ -552,36 +592,62 @@ async fn main() -> Result<()> {
                 println!("{}", p.display());
             }
             ReportCmd::Summary { junit, sarif, out } => {
-                report::summary_markdown(std::path::Path::new(&junit), std::path::Path::new(&sarif), std::path::Path::new(&out))?;
+                report::summary_markdown(
+                    std::path::Path::new(&junit),
+                    std::path::Path::new(&sarif),
+                    std::path::Path::new(&out),
+                )?;
                 println!("{}", out);
             }
         },
         Some(Commands::Quality { action }) => match action {
-            QualityCmd::Gate { junit, sarif, config, json: _ } => {
+            QualityCmd::Gate {
+                junit,
+                sarif,
+                config,
+                json: _,
+            } => {
                 // load quality cfg
                 let cfg_text = std::fs::read_to_string(&config).unwrap_or_default();
-                let tbl: toml::Value = toml::from_str(&cfg_text).unwrap_or(toml::Value::Table(Default::default()));
+                let tbl: toml::Value =
+                    toml::from_str(&cfg_text).unwrap_or(toml::Value::Table(Default::default()));
                 let qcfg: devit_common::QualityCfg = tbl
                     .get("quality")
                     .and_then(|v| v.clone().try_into().ok())
                     .unwrap_or_default();
                 // flaky list (optional)
                 let flaky_path = ".devit/flaky_tests.txt";
-                let flaky = std::fs::read_to_string(flaky_path).ok().map(|s| s.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect::<Vec<_>>());
-                let flaky_ref = flaky.as_ref().map(|v| v.as_slice());
-                let sum = report::summarize(std::path::Path::new(&junit), std::path::Path::new(&sarif), &qcfg, flaky_ref)?;
+                let flaky = std::fs::read_to_string(flaky_path).ok().map(|s| {
+                    s.lines()
+                        .map(|l| l.trim().to_string())
+                        .filter(|l| !l.is_empty())
+                        .collect::<Vec<_>>()
+                });
+                let flaky_ref = flaky.as_deref();
+                let sum = report::summarize(
+                    std::path::Path::new(&junit),
+                    std::path::Path::new(&sarif),
+                    &qcfg,
+                    flaky_ref,
+                )?;
                 let pass = report::check_thresholds(&sum, &qcfg);
                 if pass {
-                    println!("{}", serde_json::to_string(&serde_json::json!({
-                        "type":"tool.result",
-                        "payload": { "ok": true, "summary": sum, "pass": pass }
-                    }))?);
+                    println!(
+                        "{}",
+                        serde_json::to_string(&serde_json::json!({
+                            "type":"tool.result",
+                            "payload": { "ok": true, "summary": sum, "pass": pass }
+                        }))?
+                    );
                     std::process::exit(0);
                 } else {
-                    println!("{}", serde_json::to_string(&serde_json::json!({
-                        "type":"tool.error",
-                        "payload": { "ok": false, "summary": sum, "pass": pass, "reason":"thresholds_exceeded" }
-                    }))?);
+                    println!(
+                        "{}",
+                        serde_json::to_string(&serde_json::json!({
+                            "type":"tool.error",
+                            "payload": { "ok": false, "summary": sum, "pass": pass, "reason":"thresholds_exceeded" }
+                        }))?
+                    );
                     std::process::exit(1);
                 }
             }
@@ -589,19 +655,26 @@ async fn main() -> Result<()> {
         Some(Commands::Merge { action }) => match action {
             MergeCmd::Explain { paths } => {
                 let conf = merge_assist::explain(&paths)?;
-                println!("{}", serde_json::to_string(&serde_json::json!({
-                    "type":"tool.result",
-                    "payload": {"ok": true, "conflicts": conf}
-                }))?);
+                println!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "type":"tool.result",
+                        "payload": {"ok": true, "conflicts": conf}
+                    }))?
+                );
             }
             MergeCmd::Apply { plan } => {
                 let txt = std::fs::read_to_string(&plan).context("read plan.json")?;
-                let p: merge_assist::Plan = serde_json::from_str(&txt).context("parse plan.json")?;
+                let p: merge_assist::Plan =
+                    serde_json::from_str(&txt).context("parse plan.json")?;
                 merge_assist::apply_plan(&p).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                println!("{}", serde_json::to_string(&serde_json::json!({
-                    "type":"tool.result",
-                    "payload": {"ok": true}
-                }))?);
+                println!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "type":"tool.result",
+                        "payload": {"ok": true}
+                    }))?
+                );
             }
         },
         _ => {
@@ -820,12 +893,32 @@ fn tool_call_json(
             }
             let patch = args.get("patch").and_then(|v| v.as_str()).unwrap_or("");
             let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("index");
-            let no_precommit = args.get("no_precommit").and_then(|v| v.as_bool()).unwrap_or(false);
-            let precommit_only = args.get("precommit_only").and_then(|v| v.as_bool()).unwrap_or(false);
-            let precommit_mode = args.get("precommit").and_then(|v| v.as_str()).unwrap_or("auto").to_lowercase();
-            let tests_mode = args.get("tests_impacted").and_then(|v| v.as_str()).unwrap_or("auto").to_lowercase();
-            let tests_timeout_secs = args.get("tests_timeout_secs").and_then(|v| v.as_u64()).unwrap_or(300);
-            let allow_apply_on_tests_fail = args.get("allow_apply_on_tests_fail").and_then(|v| v.as_bool()).unwrap_or(false);
+            let no_precommit = args
+                .get("no_precommit")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let precommit_only = args
+                .get("precommit_only")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let precommit_mode = args
+                .get("precommit")
+                .and_then(|v| v.as_str())
+                .unwrap_or("auto")
+                .to_lowercase();
+            let tests_mode = args
+                .get("tests_impacted")
+                .and_then(|v| v.as_str())
+                .unwrap_or("auto")
+                .to_lowercase();
+            let tests_timeout_secs = args
+                .get("tests_timeout_secs")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(300);
+            let allow_apply_on_tests_fail = args
+                .get("allow_apply_on_tests_fail")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let check_only = args
                 .get("check_only")
                 .and_then(|v| v.as_bool())
@@ -837,13 +930,21 @@ fn tool_call_json(
             if precommit_only {
                 match precommit::run(cfg) {
                     Ok(()) => return Ok(serde_json::json!({"precommit_ok": true})),
-                    Err(f) => anyhow::bail!(format!("{}", serde_json::json!({
-                        "precommit_failed": true, "tool": f.tool, "exit_code": f.exit_code, "stderr": f.stderr
-                    }))),
+                    Err(f) => anyhow::bail!(format!(
+                        "{}",
+                        serde_json::json!({
+                            "precommit_failed": true, "tool": f.tool, "exit_code": f.exit_code, "stderr": f.stderr
+                        })
+                    )),
                 }
             }
             // decide precommit enabled
-            let profile = cfg.policy.profile.clone().unwrap_or_else(|| "std".into()).to_lowercase();
+            let profile = cfg
+                .policy
+                .profile
+                .clone()
+                .unwrap_or_else(|| "std".into())
+                .to_lowercase();
             let precommit_enabled = match precommit_mode.as_str() {
                 "on" => true,
                 "off" => false,
@@ -852,25 +953,39 @@ fn tool_call_json(
             if no_precommit && precommit_enabled {
                 // Bypass policy check
                 if !yes || !precommit::bypass_allowed(cfg) {
-                    anyhow::bail!(format!("{}", serde_json::json!({
-                        "approval_required": true, "policy": "on_request", "phase": "pre", "reason": "precommit_bypass"
-                    })));
+                    anyhow::bail!(format!(
+                        "{}",
+                        serde_json::json!({
+                            "approval_required": true, "policy": "on_request", "phase": "pre", "reason": "precommit_bypass"
+                        })
+                    ));
                 }
             } else if precommit_enabled {
                 if let Err(f) = precommit::run(cfg) {
                     // write precommit report
                     let _ = std::fs::create_dir_all(".devit/reports");
-                    let _ = std::fs::write(".devit/reports/precommit.json", serde_json::to_vec(&serde_json::json!({
-                        "precommit_failed": true, "tool": f.tool, "exit_code": f.exit_code
-                    })).unwrap_or_default());
-                    anyhow::bail!(format!("{}", serde_json::json!({
-                        "precommit_failed": true, "tool": f.tool, "exit_code": f.exit_code, "stderr": f.stderr
-                    })));
+                    let _ = std::fs::write(
+                        ".devit/reports/precommit.json",
+                        serde_json::to_vec(&serde_json::json!({
+                            "precommit_failed": true, "tool": f.tool, "exit_code": f.exit_code
+                        }))
+                        .unwrap_or_default(),
+                    );
+                    anyhow::bail!(format!(
+                        "{}",
+                        serde_json::json!({
+                            "precommit_failed": true, "tool": f.tool, "exit_code": f.exit_code, "stderr": f.stderr
+                        })
+                    ));
                 }
                 let _ = std::fs::create_dir_all(".devit/reports");
-                let _ = std::fs::write(".devit/reports/precommit.json", serde_json::to_vec(&serde_json::json!({
-                    "ok": true
-                })).unwrap_or_default());
+                let _ = std::fs::write(
+                    ".devit/reports/precommit.json",
+                    serde_json::to_vec(&serde_json::json!({
+                        "ok": true
+                    }))
+                    .unwrap_or_default(),
+                );
             }
             git::apply_check(patch)?;
             if check_only {
@@ -888,11 +1003,21 @@ fn tool_call_json(
                 anyhow::bail!("Échec git apply ({mode})");
             }
             // tests impacted pipeline
-            let tests_enabled = match tests_mode.as_str() { "on" => true, "off" => false, _ => profile != "danger" };
+            let tests_enabled = match tests_mode.as_str() {
+                "on" => true,
+                "off" => false,
+                _ => profile != "danger",
+            };
             if tests_enabled {
                 let ns = git::numstat(patch).unwrap_or_default();
                 let changed: Vec<String> = ns.into_iter().map(|e| e.path).collect();
-                let opts = test_runner::ImpactedOpts { changed_from: None, changed_paths: Some(changed), max_jobs: None, framework: Some("auto".into()), timeout_secs: Some(tests_timeout_secs) };
+                let opts = test_runner::ImpactedOpts {
+                    changed_from: None,
+                    changed_paths: Some(changed),
+                    max_jobs: None,
+                    framework: Some("auto".into()),
+                    timeout_secs: Some(tests_timeout_secs),
+                };
                 match test_runner::run_impacted(&opts) {
                     Ok(rep) => {
                         let _ = std::fs::write(".devit/reports/impacted.json", serde_json::to_vec(&serde_json::json!({
@@ -903,19 +1028,35 @@ fn tool_call_json(
                                 // revert
                                 use std::io::Write as _;
                                 use std::process::{Command, Stdio};
-                                let mut child = Command::new("git").args(["apply","-R","-"]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().ok();
+                                let mut child = Command::new("git")
+                                    .args(["apply", "-R", "-"])
+                                    .stdin(Stdio::piped())
+                                    .stdout(Stdio::null())
+                                    .stderr(Stdio::piped())
+                                    .spawn()
+                                    .ok();
                                 let mut reverted = false;
                                 if let Some(ref mut ch) = child {
-                                    if let Some(stdin) = ch.stdin.as_mut() { let _ = stdin.write_all(patch.as_bytes()); }
-                                    if let Ok(status) = ch.wait() { reverted = status.success(); }
+                                    if let Some(stdin) = ch.stdin.as_mut() {
+                                        let _ = stdin.write_all(patch.as_bytes());
+                                    }
+                                    if let Ok(status) = ch.wait() {
+                                        reverted = status.success();
+                                    }
                                 }
-                                anyhow::bail!(format!("{}", serde_json::json!({
-                                    "tests_failed": true, "reverted": reverted, "report": ".devit/reports/junit.xml"
-                                })));
+                                anyhow::bail!(format!(
+                                    "{}",
+                                    serde_json::json!({
+                                        "tests_failed": true, "reverted": reverted, "report": ".devit/reports/junit.xml"
+                                    })
+                                ));
                             } else {
-                                anyhow::bail!(format!("{}", serde_json::json!({
-                                    "tests_failed": true, "report": ".devit/reports/junit.xml"
-                                })));
+                                anyhow::bail!(format!(
+                                    "{}",
+                                    serde_json::json!({
+                                        "tests_failed": true, "report": ".devit/reports/junit.xml"
+                                    })
+                                ));
                             }
                         }
                     }
@@ -924,7 +1065,10 @@ fn tool_call_json(
                         if s.contains("\"timeout\":true") {
                             anyhow::bail!(format!("{}", serde_json::json!({"timeout": true})));
                         } else {
-                            anyhow::bail!(format!("{}", serde_json::json!({"tests_failed": true, "report": ".devit/reports/junit.xml"})));
+                            anyhow::bail!(format!(
+                                "{}",
+                                serde_json::json!({"tests_failed": true, "report": ".devit/reports/junit.xml"})
+                            ));
                         }
                     }
                 }
@@ -953,7 +1097,14 @@ fn tool_call_json(
     }
 }
 
-fn tool_call_legacy(cfg: &Config, name: &str, input: &str, yes: bool, no_precommit: bool, precommit_only: bool) -> Result<()> {
+fn tool_call_legacy(
+    cfg: &Config,
+    name: &str,
+    input: &str,
+    yes: bool,
+    no_precommit: bool,
+    precommit_only: bool,
+) -> Result<()> {
     match name {
         "fs_patch_apply" => {
             ensure_git_repo()?;
@@ -967,23 +1118,30 @@ fn tool_call_legacy(cfg: &Config, name: &str, input: &str, yes: bool, no_precomm
                         println!("precommit_ok: true");
                         return Ok(());
                     }
-                    Err(f) => anyhow::bail!(format!("{}", serde_json::json!({
-                        "precommit_failed": true, "tool": f.tool, "exit_code": f.exit_code, "stderr": f.stderr
-                    }))),
+                    Err(f) => anyhow::bail!(format!(
+                        "{}",
+                        serde_json::json!({
+                            "precommit_failed": true, "tool": f.tool, "exit_code": f.exit_code, "stderr": f.stderr
+                        })
+                    )),
                 }
             }
             if no_precommit {
                 if !yes || !precommit::bypass_allowed(cfg) {
-                    anyhow::bail!(format!("{}", serde_json::json!({
-                        "approval_required": true, "policy": "on_request", "phase": "pre", "reason": "precommit_bypass"
-                    })));
+                    anyhow::bail!(format!(
+                        "{}",
+                        serde_json::json!({
+                            "approval_required": true, "policy": "on_request", "phase": "pre", "reason": "precommit_bypass"
+                        })
+                    ));
                 }
-            } else {
-                if let Err(f) = precommit::run(cfg) {
-                    anyhow::bail!(format!("{}", serde_json::json!({
+            } else if let Err(f) = precommit::run(cfg) {
+                anyhow::bail!(format!(
+                    "{}",
+                    serde_json::json!({
                         "precommit_failed": true, "tool": f.tool, "exit_code": f.exit_code, "stderr": f.stderr
-                    })));
-                }
+                    })
+                ));
             }
             git::apply_check(&patch)?;
             let ask = requires_approval_tool(&cfg.policy, "git", yes, "write");
@@ -994,14 +1152,28 @@ fn tool_call_legacy(cfg: &Config, name: &str, input: &str, yes: bool, no_precomm
                 anyhow::bail!("Échec git apply --index (patch-only).");
             }
             // run impacted tests (auto on for non-danger profiles)
-            let profile = cfg.policy.profile.clone().unwrap_or_else(|| "std".into()).to_lowercase();
+            let profile = cfg
+                .policy
+                .profile
+                .clone()
+                .unwrap_or_else(|| "std".into())
+                .to_lowercase();
             if profile != "danger" {
                 let ns = git::numstat(&patch).unwrap_or_default();
                 let changed: Vec<String> = ns.into_iter().map(|e| e.path).collect();
-                let opts = test_runner::ImpactedOpts { changed_from: None, changed_paths: Some(changed), max_jobs: None, framework: Some("auto".into()), timeout_secs: Some(300) };
+                let opts = test_runner::ImpactedOpts {
+                    changed_from: None,
+                    changed_paths: Some(changed),
+                    max_jobs: None,
+                    framework: Some("auto".into()),
+                    timeout_secs: Some(300),
+                };
                 if let Ok(rep) = test_runner::run_impacted(&opts) {
                     if rep.failed > 0 {
-                        anyhow::bail!(format!("{}", serde_json::json!({"tests_failed": true, "report": ".devit/reports/junit.xml"})));
+                        anyhow::bail!(format!(
+                            "{}",
+                            serde_json::json!({"tests_failed": true, "report": ".devit/reports/junit.xml"})
+                        ));
                     }
                 }
             }
