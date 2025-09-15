@@ -283,3 +283,5 @@ bench-ids:
 	open(path,'w').write('\n'.join(ids)+'\n')
 	print('OK ->', path, ':', len(ids), 'ids')
 	PY
+mini-pipeline:
+	@./scripts/mini_patch_pipeline_verbose.sh
