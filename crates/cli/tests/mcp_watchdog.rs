@@ -1,3 +1,4 @@
+#![cfg(feature = "experimental")]
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::thread;

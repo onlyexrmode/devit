@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
-use sha2::{Digest, Sha256};
 
 pub fn generate(out: &Path) -> Result<()> {
     let mut components = Vec::new();
@@ -11,7 +11,8 @@ pub fn generate(out: &Path) -> Result<()> {
     // Rust via Cargo.lock (fallback minimal)
     if Path::new("Cargo.lock").exists() {
         if let Ok(s) = fs::read_to_string("Cargo.lock") {
-            let v: toml::Value = toml::from_str(&s).unwrap_or(toml::Value::Table(Default::default()));
+            let v: toml::Value =
+                toml::from_str(&s).unwrap_or(toml::Value::Table(Default::default()));
             if let Some(pkgs) = v.get("package").and_then(|x| x.as_array()) {
                 let mut seen = BTreeSet::new();
                 for p in pkgs {
@@ -59,13 +60,21 @@ pub fn generate(out: &Path) -> Result<()> {
         if let Ok(s) = fs::read_to_string("requirements.txt") {
             for line in s.lines() {
                 let line = line.trim();
-                if line.is_empty() || line.starts_with('#') { continue; }
-                let (name, ver) = if let Some((n, v)) = line.split_once("==") { (n, v) } else { (line, "") };
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                let (name, ver) = if let Some((n, v)) = line.split_once("==") {
+                    (n, v)
+                } else {
+                    (line, "")
+                };
                 let name = name.trim();
                 let ver = ver.trim();
                 if !name.is_empty() {
                     let mut comp = json!({"type":"library","name": name, "group":"python"});
-                    if !ver.is_empty() { comp["version"] = json!(ver); }
+                    if !ver.is_empty() {
+                        comp["version"] = json!(ver);
+                    }
                     components.push(comp);
                 }
             }
@@ -82,18 +91,30 @@ pub fn generate(out: &Path) -> Result<()> {
         },
         "components": components
     });
-    if let Some(dir) = out.parent() { fs::create_dir_all(dir).ok(); }
-    fs::write(out, serde_json::to_vec_pretty(&bom).context("serialize SBOM")?)?;
+    if let Some(dir) = out.parent() {
+        fs::create_dir_all(dir).ok();
+    }
+    fs::write(
+        out,
+        serde_json::to_vec_pretty(&bom).context("serialize SBOM")?,
+    )?;
     // Audit: append a journal line with sha256 of the SBOM
     if let Ok(bytes) = fs::read(out) {
         let mut h = Sha256::new();
         h.update(&bytes);
         let sha = hex::encode(h.finalize());
         let _ = fs::create_dir_all(".devit");
-        let mut f = fs::OpenOptions::new().create(true).append(true).open(".devit/journal.jsonl")?;
+        let mut f = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(".devit/journal.jsonl")?;
         let line = json!({"action":"sbom_gen","path": out.display().to_string(), "sha256": sha});
         use std::io::Write as _;
-        writeln!(f, "{}", serde_json::to_string(&line).unwrap_or_else(|_| "{}".into()))?;
+        writeln!(
+            f,
+            "{}",
+            serde_json::to_string(&line).unwrap_or_else(|_| "{}".into())
+        )?;
     }
     Ok(())
 }

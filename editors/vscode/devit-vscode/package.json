@@ -1,0 +1,112 @@
+{
+  "name": "devit-vscode",
+  "displayName": "DevIt Panel",
+  "description": "Minimal DevIt integration: timeline panel and MCP bridge.",
+  "version": "0.1.0",
+  "publisher": "devit",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/n-engine/devit.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "devit.showPanel",
+        "title": "DevIt: Show Panel"
+      },
+      {
+        "command": "devit.approveLast",
+        "title": "DevIt: Approve Last Request"
+      },
+      {
+        "command": "devit.runRecipe",
+        "title": "DevIt: Run Recipe…"
+      }
+    ],
+    "codeActions": [
+      {
+        "languages": [
+          "toml",
+          "rust",
+          "json",
+          "jsonc",
+          "javascript",
+          "javascriptreact",
+          "typescript",
+          "typescriptreact",
+          "yaml"
+        ],
+        "actions": [
+          {
+            "kind": "quickfix",
+            "title": "DevIt Recipes"
+          }
+        ]
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        { "command": "devit.showPanel" },
+        { "command": "devit.approveLast" },
+        { "command": "devit.runRecipe" }
+      ]
+    },
+    "configuration": {
+      "title": "DevIt",
+      "properties": {
+        "devit.devitBin": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the `devit` binary (empty uses PATH / workspace targets)."
+        },
+        "devit.mcpdBin": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the `devit-mcpd` binary (empty uses PATH / workspace targets)."
+        },
+        "devit.netPolicy": {
+          "type": "string",
+          "enum": ["off", "full"],
+          "default": "off",
+          "description": "Network policy passed to devit-mcpd (--net off|full)."
+        },
+        "devit.profile": {
+          "type": "string",
+          "enum": ["safe", "std", "danger"],
+          "default": "std",
+          "description": "Approval profile passed to devit-mcpd (--profile safe|std|danger)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "clean": "rimraf out",
+    "build": "tsc -p .",
+    "lint": "eslint .",
+    "watch": "tsc -p . -w",
+    "package": "vsce package",
+    "test": "echo 'No tests specified'",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@eslint/js": "^9.15.0",
+    "globals": "^15.9.0",
+    "@typescript-eslint/eslint-plugin": "^8.12.2",
+    "@typescript-eslint/parser": "^8.12.2",
+    "@vscode/vsce": "^3.0.0",
+    "eslint": "^9.10.0",
+    "rimraf": "^5.0.5",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {}
+}

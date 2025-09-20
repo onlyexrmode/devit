@@ -7,7 +7,21 @@ bench/.venv/
 bench/predictions.jsonl
 bench/instances_auto_*.txt
 .devit/
-!.devit/plugins/.gitkeep
+!/.devit/recipes/
+!/.devit/recipes/*.yaml
+!/.devit/scripts/
+!/.devit/scripts/ensure_sarif.sh
+!/.devit/plugins/.gitkeep
+**/.devit/
+# Re-include root-level tracked files under .devit/
+!/.devit
+!/.devit/recipes/
+!/.devit/recipes/*.yaml
+!/.devit/scripts/
+!/.devit/scripts/ensure_sarif.sh
+# Local scratch artifacts
+.screenshot/
+NOTES.md
 bench/bench_logs/
 bench/patch_diff_vide.patch
 bench/patch-devit-bin.diff
@@ -20,3 +34,4 @@ dist/**
 .prompt_ne_pach_commit_gitignore_me
 examples/plugins/**/target/
 /AGENTS.md
+editors/vscode/devit-vscode/*.vsix

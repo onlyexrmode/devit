@@ -28,7 +28,14 @@ if ! git diff --quiet || [[ -n "$(git status --porcelain)" ]]; then
   echo "error: working tree non clean. Commit/Stash d'abord." >&2; exit 2
 fi
 
-CURR_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+# Capture current ref (branch or detached HEAD)
+if git symbolic-ref -q HEAD >/dev/null 2>&1; then
+  CURR_BRANCH="$(git symbolic-ref --short HEAD)"
+  CURR_SHA="$(git rev-parse HEAD)"
+else
+  CURR_BRANCH=""
+  CURR_SHA="$(git rev-parse HEAD)"
+fi
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
 BRANCH="test/mini-pipeline-verbose-${STAMP}"
 
@@ -107,7 +114,12 @@ fi
 
 # --- Nettoyage ---------------------------------------------------------------
 git reset --hard HEAD
-git switch "$CURR_BRANCH"
+# Return to previous ref (branch if available, else detach at original SHA)
+if [[ -n "$CURR_BRANCH" ]]; then
+  git switch "$CURR_BRANCH"
+else
+  git switch --detach "$CURR_SHA"
+fi
 git branch -D "$BRANCH" >/dev/null 2>&1 || true
 
 # --- Résumé console ----------------------------------------------------------

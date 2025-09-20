@@ -1,0 +1,10 @@
+---
+id: migrate-jest-vitest
+name: "Migrate Jest tests to Vitest"
+description: "Checklist to migrate a project from Jest to Vitest."
+steps:
+  - kind: shell
+    name: "Print migration tip"
+    run: >-
+      echo 'Update package.json and replace jest configs
+      with vitest equivalents'

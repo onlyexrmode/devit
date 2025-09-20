@@ -11,18 +11,18 @@ use chrono::Utc;
 use clap::Parser;
 use hmac::{Hmac, Mac};
 use rand::{rngs::OsRng, RngCore};
-use serde_json::{json, Value};
+use serde_json::{de::Deserializer, json, Value};
 use sha2::Sha256;
-use std::collections::VecDeque;
-use std::io::{self, BufRead, Read, Write};
+use std::collections::{HashSet, VecDeque};
+use std::io::{self, BufRead, BufReader, Read, Write};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use std::{collections::HashMap, fs};
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
 type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Parser, Debug)]
@@ -86,6 +86,14 @@ struct Cli {
     /// Memory limit (MB) for child processes
     #[arg(long = "mem-mb", default_value_t = 512)]
     mem_mb: u64,
+
+    /// Dump child stdout/stderr for debugging
+    #[arg(long = "child-dump-dir")]
+    child_dump_dir: Option<PathBuf>,
+
+    /// Override approval profile (safe|std|danger)
+    #[arg(long = "profile")]
+    profile: Option<String>,
 }
 
 fn main() {
@@ -106,7 +114,10 @@ fn real_main() -> Result<()> {
     let mut stdout = io::stdout();
     let mut lines = stdin.lock().lines();
     let timeout = timeout_from_cli_env(cli.timeout_secs);
-    let policies = load_policies(cli.config_path.as_ref()).unwrap_or_default();
+    let mut policies = load_policies(cli.config_path.as_ref()).unwrap_or_default();
+    if let Some(profile_override) = cli.profile.as_deref() {
+        apply_profile_to_policies(&mut policies, profile_override);
+    }
     let audit = AuditOpts {
         audit_enabled: !cli.no_audit,
         audit_path: cli.audit_path.clone(),
@@ -179,6 +190,7 @@ fn real_main() -> Result<()> {
                         "devit.tool_list",
                         "devit.tool_call",
                         "plugin.invoke",
+                        "server.approve",
                         "server.context_head",
                         "server.health",
                         "server.stats",
@@ -196,12 +208,15 @@ fn real_main() -> Result<()> {
                     .get("name")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("missing tool name"))?;
+                let args_json = payload.get("args").cloned().unwrap_or_else(|| json!({}));
+                let (approval_tool, approval_plugin_id) = approval_identity(name, &args_json);
                 // Dry-run guard: only server.* tools allowed
                 let is_server_tool = name == "server.policy"
                     || name == "server.health"
                     || name == "server.stats"
                     || name == "server.context_head"
-                    || name == "server.stats.reset";
+                    || name == "server.stats.reset"
+                    || name == "server.approve";
                 if cli.dry_run && !is_server_tool {
                     let tool_key = name;
                     audit_pre(&audit, tool_key, "dry-run-deny");
@@ -226,19 +241,190 @@ fn real_main() -> Result<()> {
                     .unwrap_or_else(|| default_policy_for(name));
                 // on_request/untrusted: require approval before running
                 if (policy == "on_request" || policy == "untrusted") && !cli.yes {
-                    audit_pre(&audit, name, "pre-deny");
-                    writeln!(
-                        stdout,
-                        "{}",
-                        json!({
-                            "type": "tool.error",
-                            "payload": {"approval_required": true, "policy": policy, "phase": "pre"}
-                        })
-                    )?;
-                    stdout.flush()?;
-                    continue;
+                    if name == "devit.tool_call" {
+                        // Hierarchical approvals: inner (devit.tool_call:X) then outer (devit.tool_call)
+                        let requested_tool =
+                            args_json.get("tool").and_then(|v| v.as_str()).unwrap_or("");
+                        let inner_key_name = format!("devit.tool_call:{}", requested_tool);
+                        let inner_key = ApprovalKey::new(&inner_key_name, None);
+                        let outer_key = ApprovalKey::new("devit.tool_call", None);
+                        let (hit, which) =
+                            state.approvals.allow_hierarchical(&inner_key, &outer_key);
+                        match hit {
+                            ApprovalHit::Denied => {
+                                audit_pre(&audit, name, "pre-deny");
+                                let payload_obj = approval_required_payload(
+                                    &policy,
+                                    "pre",
+                                    &approval_tool,
+                                    approval_plugin_id.as_deref(),
+                                );
+                                writeln!(
+                                    stdout,
+                                    "{}",
+                                    json!({
+                                        "type": "tool.error",
+                                        "payload": payload_obj
+                                    })
+                                )?;
+                                stdout.flush()?;
+                                continue;
+                            }
+                            other_hit => {
+                                // Log matched key and hit
+                                let which_label = which.unwrap_or("outer");
+                                let matched_name = if which_label == "inner" {
+                                    inner_key_name.as_str()
+                                } else {
+                                    "devit.tool_call"
+                                };
+                                audit_server_approve_consume_detail(
+                                    &audit,
+                                    other_hit,
+                                    &approval_tool,
+                                    approval_plugin_id.as_deref(),
+                                    which_label,
+                                    matched_name,
+                                );
+                            }
+                        }
+                    } else {
+                        let approval_key =
+                            ApprovalKey::new(&approval_tool, approval_plugin_id.as_deref());
+                        match state.approvals.allow(&approval_key) {
+                            ApprovalHit::Denied => {
+                                audit_pre(&audit, name, "pre-deny");
+                                let payload_obj = approval_required_payload(
+                                    &policy,
+                                    "pre",
+                                    &approval_tool,
+                                    approval_plugin_id.as_deref(),
+                                );
+                                writeln!(
+                                    stdout,
+                                    "{}",
+                                    json!({
+                                        "type": "tool.error",
+                                        "payload": payload_obj
+                                    })
+                                )?;
+                                stdout.flush()?;
+                                continue;
+                            }
+                            ApprovalHit::Once => {
+                                audit_server_approve_consume(
+                                    &audit,
+                                    &approval_tool,
+                                    approval_plugin_id.as_deref(),
+                                );
+                            }
+                            ApprovalHit::Session | ApprovalHit::Always => {}
+                        }
+                    }
                 }
                 match name {
+                    "server.approve" => {
+                        let tool_key = "server.approve";
+                        state.bump_call(tool_key);
+                        let target_tool = match args_json.get("name").and_then(|v| v.as_str()) {
+                            Some(s) if !s.is_empty() => s,
+                            _ => {
+                                state.bump_err(tool_key);
+                                writeln!(
+                                    stdout,
+                                    "{}",
+                                    json!({
+                                        "type": "tool.error",
+                                        "payload": {"approval_op_failed": true, "reason": "invalid_args"}
+                                    })
+                                )?;
+                                continue;
+                            }
+                        };
+                        let scope = match args_json.get("scope").and_then(|v| v.as_str()) {
+                            Some(s) => s,
+                            None => {
+                                state.bump_err(tool_key);
+                                writeln!(
+                                    stdout,
+                                    "{}",
+                                    json!({
+                                        "type": "tool.error",
+                                        "payload": {"approval_op_failed": true, "reason": "invalid_scope"}
+                                    })
+                                )?;
+                                continue;
+                            }
+                        };
+                        let plugin_id = args_json.get("plugin_id").and_then(|v| v.as_str());
+                        let reason = args_json.get("reason").and_then(|v| v.as_str());
+                        let key = ApprovalKey::new(target_tool, plugin_id);
+                        match state.approvals.approve(scope, key) {
+                            Ok(applied_scope) => {
+                                state.bump_ok(tool_key);
+                                audit_server_approve(
+                                    &audit,
+                                    applied_scope,
+                                    target_tool,
+                                    plugin_id,
+                                    reason,
+                                );
+                                let mut result = json!({
+                                    "type": "tool.result",
+                                    "payload": {
+                                        "name": tool_key,
+                                        "result": {
+                                            "ok": true,
+                                            "applied": true,
+                                            "scope": applied_scope,
+                                            "tool": target_tool,
+                                        }
+                                    }
+                                });
+                                if let Some(pid) = plugin_id {
+                                    if let Some(obj) = result
+                                        .get_mut("payload")
+                                        .and_then(|v| v.get_mut("result"))
+                                        .and_then(|v| v.as_object_mut())
+                                    {
+                                        obj.insert("plugin_id".to_string(), json!(pid));
+                                    }
+                                }
+                                if let Some(r) = reason {
+                                    if let Some(obj) = result
+                                        .get_mut("payload")
+                                        .and_then(|v| v.get_mut("result"))
+                                        .and_then(|v| v.as_object_mut())
+                                    {
+                                        obj.insert("reason".to_string(), json!(r));
+                                    }
+                                }
+                                writeln!(stdout, "{}", result)?;
+                            }
+                            Err("invalid_scope") => {
+                                state.bump_err(tool_key);
+                                writeln!(
+                                    stdout,
+                                    "{}",
+                                    json!({
+                                        "type": "tool.error",
+                                        "payload": {"approval_op_failed": true, "reason": "invalid_scope"}
+                                    })
+                                )?;
+                            }
+                            Err(_) => {
+                                state.bump_err(tool_key);
+                                writeln!(
+                                    stdout,
+                                    "{}",
+                                    json!({
+                                        "type": "tool.error",
+                                        "payload": {"approval_op_failed": true, "reason": "invalid_scope"}
+                                    })
+                                )?;
+                            }
+                        }
+                    }
                     "server.context_head" => {
                         let tool_key = "server.context_head";
                         state.bump_call(tool_key);
@@ -427,12 +613,18 @@ fn real_main() -> Result<()> {
                                             .map(|b| !b)
                                             .unwrap_or(false);
                                         if policy == "on_failure" && is_fail && !cli.yes {
+                                            let payload_obj = approval_required_payload(
+                                                &policy,
+                                                "post",
+                                                &approval_tool,
+                                                approval_plugin_id.as_deref(),
+                                            );
                                             writeln!(
                                                 stdout,
                                                 "{}",
                                                 json!({
                                                     "type": "tool.error",
-                                                    "payload": {"approval_required": true, "policy": policy, "phase": "post"}
+                                                    "payload": payload_obj
                                                 })
                                             )?;
                                         } else {
@@ -661,8 +853,13 @@ fn real_main() -> Result<()> {
                         )?;
                     }
                     "devit.tool_list" => {
-                        if state.sandbox_unavailable && cli.sandbox.to_ascii_lowercase() == "bwrap" {
-                            writeln!(stdout, "{}", json!({"type":"tool.error","payload":{"sandbox_unavailable": true, "reason":"bwrap_not_found"}}))?;
+                        if state.sandbox_unavailable && cli.sandbox.to_ascii_lowercase() == "bwrap"
+                        {
+                            writeln!(
+                                stdout,
+                                "{}",
+                                json!({"type":"tool.error","payload":{"sandbox_unavailable": true, "reason":"bwrap_not_found"}})
+                            )?;
                             continue;
                         }
                         let bin = cli
@@ -720,13 +917,28 @@ fn real_main() -> Result<()> {
                             Err(e) => {
                                 let dur = start.elapsed().as_millis();
                                 audit_done(&audit, name, false, dur, Some(&e.to_string()));
-                                if policy == "on_failure" && !cli.yes {
+                                if let Some(child_err) = e.downcast_ref::<ChildJsonError>() {
                                     writeln!(
                                         stdout,
                                         "{}",
                                         json!({
                                             "type": "tool.error",
-                                            "payload": {"approval_required": true, "policy": policy, "phase": "post"}
+                                            "payload": child_err.payload()
+                                        })
+                                    )?;
+                                } else if policy == "on_failure" && !cli.yes {
+                                    let payload_obj = approval_required_payload(
+                                        &policy,
+                                        "post",
+                                        &approval_tool,
+                                        approval_plugin_id.as_deref(),
+                                    );
+                                    writeln!(
+                                        stdout,
+                                        "{}",
+                                        json!({
+                                            "type": "tool.error",
+                                            "payload": payload_obj
                                         })
                                     )?;
                                 } else {
@@ -743,8 +955,13 @@ fn real_main() -> Result<()> {
                         }
                     }
                     "devit.tool_call" => {
-                        if state.sandbox_unavailable && cli.sandbox.to_ascii_lowercase() == "bwrap" {
-                            writeln!(stdout, "{}", json!({"type":"tool.error","payload":{"sandbox_unavailable": true, "reason":"bwrap_not_found"}}))?;
+                        if state.sandbox_unavailable && cli.sandbox.to_ascii_lowercase() == "bwrap"
+                        {
+                            writeln!(
+                                stdout,
+                                "{}",
+                                json!({"type":"tool.error","payload":{"sandbox_unavailable": true, "reason":"bwrap_not_found"}})
+                            )?;
                             continue;
                         }
                         let bin = cli
@@ -752,6 +969,25 @@ fn real_main() -> Result<()> {
                             .clone()
                             .unwrap_or_else(|| PathBuf::from("devit"));
                         let args_json = payload.get("args").cloned().unwrap_or(json!({}));
+                        if let Some(requested_tool) = args_json.get("tool").and_then(|v| v.as_str())
+                        {
+                            if requested_tool.starts_with("server.") {
+                                writeln!(
+                                    stdout,
+                                    "{}",
+                                    json!({
+                                        "type": "tool.error",
+                                        "payload": {
+                                            "server_tool_proxy_denied": true,
+                                            "tool": requested_tool,
+                                            "hint": "call server.* tool directly"
+                                        }
+                                    })
+                                )?;
+                                stdout.flush()?;
+                                continue;
+                            }
+                        }
                         // PR1: explicit env request denial
                         if let Some(args_obj) = args_json.get("args").and_then(|v| v.as_object()) {
                             if let Some(env_obj) = args_obj.get("env").and_then(|v| v.as_object()) {
@@ -805,8 +1041,25 @@ fn real_main() -> Result<()> {
                                 continue;
                             }
                         }
+                        // Transform payload to DevIt CLI expected shape: {"name":"X","args":{...},"yes":bool}
+                        let requested_tool = args_json
+                            .get("tool")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let forwarded_args =
+                            args_json.get("args").cloned().unwrap_or_else(|| json!({}));
+                        let mut forwarded = json!({
+                            "name": requested_tool,
+                            "args": forwarded_args,
+                        });
+                        if cli.yes {
+                            if let Some(obj) = forwarded.as_object_mut() {
+                                obj.insert("yes".to_string(), json!(true));
+                            }
+                        }
                         let start = Instant::now();
-                        match run_devit_call_sandboxed(&bin, &args_json, timeout, &cli) {
+                        match run_devit_call_sandboxed(&bin, &forwarded, timeout, &cli) {
                             Ok(out) => {
                                 // on_failure: if DevIt reports ok=false, require approval (post)
                                 let is_fail = out
@@ -817,12 +1070,18 @@ fn real_main() -> Result<()> {
                                 let dur = start.elapsed().as_millis();
                                 audit_done(&audit, name, !is_fail, dur, None);
                                 if policy == "on_failure" && is_fail && !cli.yes {
+                                    let payload_obj = approval_required_payload(
+                                        &policy,
+                                        "post",
+                                        &approval_tool,
+                                        approval_plugin_id.as_deref(),
+                                    );
                                     writeln!(
                                         stdout,
                                         "{}",
                                         json!({
                                             "type": "tool.error",
-                                            "payload": {"approval_required": true, "policy": policy, "phase": "post"}
+                                            "payload": payload_obj
                                         })
                                     )?;
                                 } else {
@@ -839,13 +1098,28 @@ fn real_main() -> Result<()> {
                             Err(e) => {
                                 let dur = start.elapsed().as_millis();
                                 audit_done(&audit, name, false, dur, Some(&e.to_string()));
-                                if policy == "on_failure" && !cli.yes {
+                                if let Some(child_err) = e.downcast_ref::<ChildJsonError>() {
                                     writeln!(
                                         stdout,
                                         "{}",
                                         json!({
                                             "type": "tool.error",
-                                            "payload": {"approval_required": true, "policy": policy, "phase": "post"}
+                                            "payload": child_err.payload()
+                                        })
+                                    )?;
+                                } else if policy == "on_failure" && !cli.yes {
+                                    let payload_obj = approval_required_payload(
+                                        &policy,
+                                        "post",
+                                        &approval_tool,
+                                        approval_plugin_id.as_deref(),
+                                    );
+                                    writeln!(
+                                        stdout,
+                                        "{}",
+                                        json!({
+                                            "type": "tool.error",
+                                            "payload": payload_obj
                                         })
                                     )?;
                                 } else {
@@ -909,22 +1183,37 @@ fn timeout_from_cli_env(override_secs: Option<u64>) -> Duration {
 
 // ---- PR1: simple secrets env allowlist loader ----
 fn load_secrets_allow(path: Option<&PathBuf>) -> Vec<String> {
-    let mut allow = vec!["PATH".to_string(), "HOME".to_string(), "RUST_BACKTRACE".to_string()];
-    let path = path.cloned().unwrap_or_else(|| PathBuf::from(".devit/devit.toml"));
+    let mut allow = vec![
+        "PATH".to_string(),
+        "HOME".to_string(),
+        "RUST_BACKTRACE".to_string(),
+    ];
+    let path = path
+        .cloned()
+        .unwrap_or_else(|| PathBuf::from(".devit/devit.toml"));
     if let Ok(s) = fs::read_to_string(&path) {
         #[derive(serde::Deserialize, Default)]
-        struct Root { secrets: Option<SecretsSect> }
+        struct Root {
+            secrets: Option<SecretsSect>,
+        }
         #[derive(serde::Deserialize, Default)]
-        struct SecretsSect { env_allow: Option<Vec<String>> }
+        struct SecretsSect {
+            env_allow: Option<Vec<String>>,
+        }
         if let Ok(r) = toml::from_str::<Root>(&s) {
-            if let Some(sec) = r.secrets { if let Some(v) = sec.env_allow { allow = v; } }
+            if let Some(sec) = r.secrets {
+                if let Some(v) = sec.env_allow {
+                    allow = v;
+                }
+            }
         }
     }
     allow
 }
 
 fn first_env_denied(env_map: &serde_json::Map<String, Value>, allow: &[String]) -> Option<String> {
-    let set: std::collections::HashSet<String> = allow.iter().map(|s| s.to_ascii_uppercase()).collect();
+    let set: std::collections::HashSet<String> =
+        allow.iter().map(|s| s.to_ascii_uppercase()).collect();
     for (k, _v) in env_map.iter() {
         if !set.contains(&k.to_ascii_uppercase()) {
             return Some(k.clone());
@@ -935,6 +1224,35 @@ fn first_env_denied(env_map: &serde_json::Map<String, Value>, allow: &[String]) 
 
 #[derive(Default)]
 struct Policies(HashMap<String, String>);
+
+fn apply_profile_to_policies(policies: &mut Policies, profile: &str) {
+    let profile_lc = profile.to_ascii_lowercase();
+    match profile_lc.as_str() {
+        "safe" => {
+            policies
+                .0
+                .insert("devit.tool_call".into(), "on_request".into());
+            policies
+                .0
+                .insert("plugin.invoke".into(), "on_request".into());
+        }
+        "std" => {
+            policies
+                .0
+                .insert("devit.tool_call".into(), "on_failure".into());
+            policies
+                .0
+                .insert("plugin.invoke".into(), "on_request".into());
+        }
+        "danger" => {
+            policies.0.insert("devit.tool_call".into(), "never".into());
+            policies
+                .0
+                .insert("plugin.invoke".into(), "on_failure".into());
+        }
+        _ => {}
+    }
+}
 
 fn load_policies(path: Option<&PathBuf>) -> Result<Policies> {
     let path = if let Some(p) = path {
@@ -961,22 +1279,7 @@ fn load_policies(path: Option<&PathBuf>) -> Result<Policies> {
     if let Some(mcp) = r.mcp {
         // Apply profile presets first
         if let Some(p) = mcp.profile.as_deref() {
-            match p {
-                "safe" => {
-                    out.0.insert("devit.tool_call".into(), "on_request".into());
-                    out.0.insert("plugin.invoke".into(), "on_request".into());
-                    // server.* already "never" by defaults
-                }
-                "std" => {
-                    out.0.insert("devit.tool_call".into(), "on_failure".into());
-                    out.0.insert("plugin.invoke".into(), "on_request".into());
-                }
-                "danger" => {
-                    out.0.insert("devit.tool_call".into(), "never".into());
-                    out.0.insert("plugin.invoke".into(), "on_failure".into());
-                }
-                _ => {}
-            }
+            apply_profile_to_policies(&mut out, p);
         }
         // Then explicit overrides
         if let Some(map) = mcp.approvals {
@@ -997,6 +1300,7 @@ fn default_policies() -> Policies {
     m.insert("server.health".to_string(), "never".to_string());
     m.insert("server.stats".to_string(), "never".to_string());
     m.insert("server.stats.reset".to_string(), "on_request".to_string());
+    m.insert("server.approve".to_string(), "never".to_string());
     m.insert("echo".to_string(), "never".to_string());
     Policies(m)
 }
@@ -1005,6 +1309,7 @@ fn default_policy_for(tool: &str) -> String {
     match tool {
         "devit.tool_list" => "never".to_string(),
         "devit.tool_call" => "on_request".to_string(),
+        "server.approve" => "never".to_string(),
         "echo" => "never".to_string(),
         _ => "on_request".to_string(),
     }
@@ -1151,6 +1456,104 @@ fn audit_done(opts: &AuditOpts, tool: &str, ok: bool, dur_ms: u128, err: Option<
     );
 }
 
+fn audit_server_approve(
+    opts: &AuditOpts,
+    scope: &str,
+    tool: &str,
+    plugin_id: Option<&str>,
+    reason: Option<&str>,
+) {
+    if !opts.audit_enabled {
+        return;
+    }
+    let ts = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let mut payload = json!({
+        "ts": ts,
+        "action": "server.approve",
+        "scope": scope,
+        "tool": tool,
+    });
+    if let Some(pid) = plugin_id {
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("plugin_id".to_string(), json!(pid));
+        }
+    }
+    if let Some(r) = reason {
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("reason".to_string(), json!(r));
+        }
+    }
+    let line = payload.to_string();
+    append_signed(
+        &opts.audit_path.as_path(),
+        &opts.hmac_key_path.as_path(),
+        &line,
+    );
+}
+
+fn audit_server_approve_consume(opts: &AuditOpts, tool: &str, plugin_id: Option<&str>) {
+    if !opts.audit_enabled {
+        return;
+    }
+    let ts = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let mut payload = json!({
+        "ts": ts,
+        "action": "server.approve.consume",
+        "scope": "once",
+        "tool": tool,
+    });
+    if let Some(pid) = plugin_id {
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("plugin_id".to_string(), json!(pid));
+        }
+    }
+    let line = payload.to_string();
+    append_signed(
+        &opts.audit_path.as_path(),
+        &opts.hmac_key_path.as_path(),
+        &line,
+    );
+}
+
+fn audit_server_approve_consume_detail(
+    opts: &AuditOpts,
+    hit: ApprovalHit,
+    tool: &str,
+    plugin_id: Option<&str>,
+    approval_key_label: &str, // "inner" | "outer"
+    name: &str, // matched key name (e.g., "devit.tool_call" or "devit.tool_call:<subtool>")
+) {
+    if !opts.audit_enabled {
+        return;
+    }
+    let ts = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let hit_str = match hit {
+        ApprovalHit::Once => "once",
+        ApprovalHit::Session => "session",
+        ApprovalHit::Always => "always",
+        ApprovalHit::Denied => "denied",
+    };
+    let mut payload = json!({
+        "ts": ts,
+        "action": "server.approve.consume",
+        "hit": hit_str,
+        "tool": tool,
+        "approval_key": approval_key_label,
+        "name": name,
+    });
+    if let Some(pid) = plugin_id {
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("plugin_id".to_string(), json!(pid));
+        }
+    }
+    let line = payload.to_string();
+    append_signed(
+        &opts.audit_path.as_path(),
+        &opts.hmac_key_path.as_path(),
+        &line,
+    );
+}
+
 // --- helper de dump de politique (JSON) ---
 pub fn policy_dump_json(config_path: Option<&std::path::Path>) -> serde_json::Value {
     use std::collections::BTreeMap;
@@ -1173,22 +1576,8 @@ pub fn policy_dump_json(config_path: Option<&std::path::Path>) -> serde_json::Va
             if let Ok(root) = toml::from_str::<Root>(&s) {
                 if let Some(m) = root.mcp {
                     if let Some(pr) = m.profile {
-                        profile = Some(pr.clone());
-                        match pr.as_str() {
-                            "safe" => {
-                                eff.0.insert("devit.tool_call".into(), "on_request".into());
-                                eff.0.insert("plugin.invoke".into(), "on_request".into());
-                            }
-                            "std" => {
-                                eff.0.insert("devit.tool_call".into(), "on_failure".into());
-                                eff.0.insert("plugin.invoke".into(), "on_request".into());
-                            }
-                            "danger" => {
-                                eff.0.insert("devit.tool_call".into(), "never".into());
-                                eff.0.insert("plugin.invoke".into(), "on_failure".into());
-                            }
-                            _ => {}
-                        }
+                        apply_profile_to_policies(&mut eff, &pr);
+                        profile = Some(pr);
                     }
                     if let Some(map) = m.approvals {
                         for (k, v) in map.into_iter() {
@@ -1205,6 +1594,7 @@ pub fn policy_dump_json(config_path: Option<&std::path::Path>) -> serde_json::Va
         "devit.tool_list",
         "devit.tool_call",
         "plugin.invoke",
+        "server.approve",
         "server.policy",
         "server.context_head",
         "server.health",
@@ -1251,6 +1641,7 @@ fn policy_effective_json(
         "devit.tool_list",
         "devit.tool_call",
         "plugin.invoke",
+        "server.approve",
         "server.policy",
         "server.stats.reset",
         "echo",
@@ -1288,6 +1679,106 @@ fn policy_effective_json(
 }
 
 // -------- Server State / Health / Stats --------
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ApprovalKey {
+    tool: String,
+    plugin_id: Option<String>,
+}
+
+impl ApprovalKey {
+    fn new(tool: &str, plugin_id: Option<&str>) -> Self {
+        Self {
+            tool: tool.to_string(),
+            plugin_id: plugin_id.map(|s| s.to_string()),
+        }
+    }
+}
+
+struct ApprovalsStore {
+    once: HashSet<ApprovalKey>,
+    session: HashSet<ApprovalKey>,
+    always: HashSet<ApprovalKey>,
+}
+
+impl ApprovalsStore {
+    fn new() -> Self {
+        Self {
+            once: HashSet::new(),
+            session: HashSet::new(),
+            always: HashSet::new(),
+        }
+    }
+
+    fn approve(&mut self, scope: &str, key: ApprovalKey) -> Result<&'static str, &'static str> {
+        match scope {
+            "once" => {
+                self.once.insert(key);
+                Ok("once")
+            }
+            "session" => {
+                self.session.insert(key);
+                Ok("session")
+            }
+            "always" => {
+                // MVP: treat as session storage for now
+                self.always.insert(key.clone());
+                self.session.insert(key);
+                Ok("always")
+            }
+            _ => Err("invalid_scope"),
+        }
+    }
+
+    fn allow(&mut self, key: &ApprovalKey) -> ApprovalHit {
+        if self.once.remove(key) {
+            return ApprovalHit::Once;
+        }
+        if self.session.contains(key) {
+            return ApprovalHit::Session;
+        }
+        if self.always.contains(key) {
+            return ApprovalHit::Always;
+        }
+        ApprovalHit::Denied
+    }
+
+    // Hierarchical allow for devit.tool_call approvals.
+    // Order: inner.once > outer.once > inner.session > outer.session > inner.always > outer.always
+    fn allow_hierarchical(
+        &mut self,
+        inner: &ApprovalKey,
+        outer: &ApprovalKey,
+    ) -> (ApprovalHit, Option<&'static str>) {
+        if self.once.remove(inner) {
+            return (ApprovalHit::Once, Some("inner"));
+        }
+        if self.once.remove(outer) {
+            return (ApprovalHit::Once, Some("outer"));
+        }
+        if self.session.contains(inner) {
+            return (ApprovalHit::Session, Some("inner"));
+        }
+        if self.session.contains(outer) {
+            return (ApprovalHit::Session, Some("outer"));
+        }
+        if self.always.contains(inner) {
+            return (ApprovalHit::Always, Some("inner"));
+        }
+        if self.always.contains(outer) {
+            return (ApprovalHit::Always, Some("outer"));
+        }
+        (ApprovalHit::Denied, None)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApprovalHit {
+    Denied,
+    Once,
+    Session,
+    Always,
+}
+
 struct ServerState {
     start: Instant,
     per_key_calls: HashMap<String, u64>,
@@ -1297,6 +1788,115 @@ struct ServerState {
     total_ok: u64,
     total_err: u64,
     sandbox_unavailable: bool,
+    approvals: ApprovalsStore,
+}
+
+#[derive(Debug)]
+struct ChildJsonError {
+    stdout: String,
+    stderr: String,
+    parse_error: String,
+}
+
+impl ChildJsonError {
+    fn new(stdout: String, stderr: String, parse_error: impl Into<String>) -> Self {
+        Self {
+            stdout,
+            stderr,
+            parse_error: parse_error.into(),
+        }
+    }
+
+    fn payload(&self) -> Value {
+        let mut payload = json!({
+            "child_invalid_json": true,
+            "preview": preview_snippet(&self.stdout),
+            "stderr_preview": preview_snippet(&self.stderr),
+        });
+        if !self.parse_error.is_empty() {
+            if let Some(obj) = payload.as_object_mut() {
+                obj.insert("parse_error".to_string(), json!(self.parse_error));
+            }
+        }
+        payload
+    }
+}
+
+impl std::fmt::Display for ChildJsonError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "child JSON parse failed: {}", self.parse_error)
+    }
+}
+
+impl std::error::Error for ChildJsonError {}
+
+fn preview_snippet(s: &str) -> String {
+    const MAX: usize = 200;
+    let mut buf = String::new();
+    for (idx, ch) in s.chars().enumerate() {
+        if idx >= MAX {
+            buf.push('…');
+            break;
+        }
+        buf.push(ch);
+    }
+    buf
+}
+
+fn parse_last_json_value(output: &str) -> Result<Option<Value>, serde_json::Error> {
+    let mut last: Option<Value> = None;
+    let mut stream = Deserializer::from_str(output).into_iter::<Value>();
+    while let Some(item) = stream.next() {
+        match item {
+            Ok(v) => last = Some(v),
+            Err(err) => {
+                if last.is_some() {
+                    return Ok(last);
+                } else {
+                    return Err(err);
+                }
+            }
+        }
+    }
+    Ok(last)
+}
+
+fn spawn_pipe_reader<R>(pipe: R) -> mpsc::Receiver<Result<String>>
+where
+    R: Read + Send + 'static,
+{
+    let (tx, rx) = mpsc::sync_channel::<Result<String>>(1);
+    std::thread::spawn(move || {
+        let mut buf = String::new();
+        let res = {
+            let mut reader = BufReader::new(pipe);
+            reader
+                .read_to_string(&mut buf)
+                .map(|_| buf)
+                .map_err(|e| anyhow!(e))
+        };
+        let _ = tx.send(res);
+    });
+    rx
+}
+
+fn maybe_dump_child_output(dir: &Option<PathBuf>, child_id: u32, stdout: &str, stderr: &str) {
+    if let Some(dir) = dir {
+        if let Err(e) = fs::create_dir_all(dir) {
+            eprintln!("warn: child dump mkdir failed: {e}");
+            return;
+        }
+        let ts = Utc::now().format("%Y%m%d%H%M%S");
+        let prefix = format!("child_{}_{}", ts, child_id);
+        let stdout_path = dir.join(format!("{prefix}.stdout.log"));
+        let stderr_path = dir.join(format!("{prefix}.stderr.log"));
+        if let Err(e) = fs::write(&stdout_path, stdout) {
+            eprintln!("warn: child dump stdout failed: {e}");
+        }
+        if let Err(e) = fs::write(&stderr_path, stderr) {
+            eprintln!("warn: child dump stderr failed: {e}");
+        }
+    }
 }
 
 impl ServerState {
@@ -1310,6 +1910,7 @@ impl ServerState {
             total_ok: 0,
             total_err: 0,
             sandbox_unavailable: false,
+            approvals: ApprovalsStore::new(),
         }
     }
     fn reset(&mut self) {
@@ -1320,6 +1921,7 @@ impl ServerState {
         self.total_ok = 0;
         self.total_err = 0;
         self.start = Instant::now();
+        self.approvals = ApprovalsStore::new();
     }
     fn bump_call(&mut self, key: &str) {
         self.total_calls += 1;
@@ -1332,6 +1934,131 @@ impl ServerState {
     fn bump_err(&mut self, key: &str) {
         self.total_err += 1;
         *self.per_key_err.entry(key.to_string()).or_insert(0) += 1;
+    }
+}
+
+fn approval_identity(name: &str, args: &Value) -> (String, Option<String>) {
+    let plugin_id_owned = if name == "plugin.invoke" {
+        args.get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    } else {
+        args.get("plugin_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    };
+
+    let tool_id = match name {
+        "devit.tool_call" => args
+            .get("tool")
+            .and_then(|v| v.as_str())
+            .unwrap_or(name)
+            .to_string(),
+        "plugin.invoke" => {
+            if let Some(pid) = plugin_id_owned.as_ref() {
+                format!("plugin.invoke:{pid}")
+            } else {
+                name.to_string()
+            }
+        }
+        _ => name.to_string(),
+    };
+
+    (tool_id, plugin_id_owned)
+}
+
+fn approval_required_payload(
+    policy: &str,
+    phase: &str,
+    tool: &str,
+    plugin_id: Option<&str>,
+) -> Value {
+    let mut payload = json!({
+        "approval_required": true,
+        "policy": policy,
+        "phase": phase,
+        "tool": tool,
+    });
+    if let Some(pid) = plugin_id {
+        if let Some(map) = payload.as_object_mut() {
+            map.insert("plugin_id".to_string(), json!(pid));
+        }
+    }
+    payload
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn approve_once_then_consume() {
+        let mut store = ApprovalsStore::new();
+        let key = ApprovalKey::new("shell_exec", None);
+        store.approve("once", key.clone()).unwrap();
+        assert!(matches!(store.allow(&key), ApprovalHit::Once));
+        assert!(matches!(store.allow(&key), ApprovalHit::Denied));
+    }
+
+    #[test]
+    fn approve_session_allows_multiple() {
+        let mut store = ApprovalsStore::new();
+        let key = ApprovalKey::new("shell_exec", None);
+        store.approve("session", key.clone()).unwrap();
+        assert!(matches!(store.allow(&key), ApprovalHit::Session));
+        assert!(matches!(store.allow(&key), ApprovalHit::Session));
+    }
+
+    #[test]
+    fn approval_invalid_scope() {
+        let mut store = ApprovalsStore::new();
+        let key = ApprovalKey::new("shell_exec", None);
+        assert_eq!(store.approve("bogus", key), Err("invalid_scope"));
+    }
+
+    #[test]
+    fn approval_identity_devit_tool() {
+        let args = json!({"tool": "shell_exec"});
+        let (tool, plugin_id) = approval_identity("devit.tool_call", &args);
+        assert_eq!(tool, "shell_exec");
+        assert!(plugin_id.is_none());
+    }
+
+    #[test]
+    fn approval_identity_plugin() {
+        let args = json!({"id": "example"});
+        let (tool, plugin_id) = approval_identity("plugin.invoke", &args);
+        assert_eq!(tool, "plugin.invoke:example");
+        assert_eq!(plugin_id.as_deref(), Some("example"));
+    }
+
+    #[test]
+    fn hierarchical_approvals_inner_once_then_denied() {
+        let mut store = ApprovalsStore::new();
+        let inner = ApprovalKey::new("devit.tool_call:shell_exec", None);
+        let outer = ApprovalKey::new("devit.tool_call", None);
+        store.approve("once", inner.clone()).unwrap();
+        let (hit1, which1) = store.allow_hierarchical(&inner, &outer);
+        assert!(matches!(hit1, ApprovalHit::Once));
+        assert_eq!(which1, Some("inner"));
+        let (hit2, which2) = store.allow_hierarchical(&inner, &outer);
+        assert!(matches!(hit2, ApprovalHit::Denied));
+        assert!(which2.is_none());
+    }
+
+    #[test]
+    fn hierarchical_approvals_outer_session_persists() {
+        let mut store = ApprovalsStore::new();
+        let inner = ApprovalKey::new("devit.tool_call:shell_exec", None);
+        let outer = ApprovalKey::new("devit.tool_call", None);
+        store.approve("session", outer.clone()).unwrap();
+        let (hit1, which1) = store.allow_hierarchical(&inner, &outer);
+        assert!(matches!(hit1, ApprovalHit::Session));
+        assert_eq!(which1, Some("outer"));
+        let (hit2, which2) = store.allow_hierarchical(&inner, &outer);
+        assert!(matches!(hit2, ApprovalHit::Session));
+        assert_eq!(which2, Some("outer"));
     }
 }
 
@@ -1504,7 +2231,6 @@ fn run_devit_plugin_manifest(
             .take()
             .ok_or_else(|| anyhow!("child stdin missing"))?;
         let s = serde_json::to_string(&payload)?;
-        use std::io::Write as _;
         sin.write_all(s.as_bytes())?;
         sin.flush()?;
     }
@@ -1685,7 +2411,7 @@ fn context_head_json(
 #[cfg(test)]
 mod ctx_tests {
     use super::*;
-    use std::io::Write as _;
+    use std::io::Write;
     #[test]
     fn context_head_reads_index() {
         let dir = tempfile::tempdir().unwrap();
@@ -1738,30 +2464,38 @@ profile = "std"
     }
 }
 fn run_devit_list_sandboxed(bin: &PathBuf, timeout: Duration, cli: &Cli) -> Result<Value> {
-    // Build command possibly under bwrap; apply rlimits
     let mut cmd = if cli.sandbox.to_ascii_lowercase() == "bwrap" {
         let mut c = Command::new("bwrap");
         c.arg("--unshare-user");
-        if cli.net.to_ascii_lowercase() == "off" { c.arg("--unshare-net"); }
-        c.args(["--dev","/dev"]).args(["--proc","/proc"]).arg("--die-with-parent");
-        for p in ["/usr","/bin","/sbin","/lib","/lib64","/etc"].iter() {
-            if std::path::Path::new(p).exists() { c.args(["--ro-bind", p, p]); }
+        if cli.net.to_ascii_lowercase() == "off" {
+            c.arg("--unshare-net");
+        }
+        c.args(["--dev", "/dev"])
+            .args(["--proc", "/proc"])
+            .arg("--die-with-parent");
+        for p in ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"].iter() {
+            if std::path::Path::new(p).exists() {
+                c.args(["--ro-bind", p, p]);
+            }
         }
         if let Ok(cwd) = std::env::current_dir() {
             let p = cwd.to_string_lossy().to_string();
             c.args(["--bind", &p, &p]).args(["--chdir", &p]);
         }
-        // Run devit directly inside bwrap
-        c.arg("--").arg(bin.as_os_str()).arg("tool").arg("list");
+        c.arg("--")
+            .arg(bin.as_os_str())
+            .arg("tool")
+            .arg("list")
+            .arg("--json-only");
         c
     } else {
         let mut c = Command::new(bin);
-        c.arg("tool").arg("list");
+        c.arg("tool").arg("list").arg("--json-only");
         c
     };
-    // stdout/stderr
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::inherit());
-    // Apply rlimits for sandbox=none using pre_exec
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     #[cfg(unix)]
     if cli.sandbox.to_ascii_lowercase() == "none" {
         use libc::{rlimit, RLIMIT_AS, RLIMIT_CPU};
@@ -1769,65 +2503,123 @@ fn run_devit_list_sandboxed(bin: &PathBuf, timeout: Duration, cli: &Cli) -> Resu
         let mem = (cli.mem_mb as u64) * 1024 * 1024;
         unsafe {
             cmd.pre_exec(move || {
-                let r_cpu = rlimit { rlim_cur: cpu, rlim_max: cpu };
-                let r_mem = rlimit { rlim_cur: mem, rlim_max: mem };
-                if libc::setrlimit(RLIMIT_CPU, &r_cpu as *const _) != 0 { return Err(std::io::Error::new(std::io::ErrorKind::Other, "sandbox_error:rlimit_set_failed")); }
-                if libc::setrlimit(RLIMIT_AS, &r_mem as *const _) != 0 { return Err(std::io::Error::new(std::io::ErrorKind::Other, "sandbox_error:rlimit_set_failed")); }
+                let r_cpu = rlimit {
+                    rlim_cur: cpu,
+                    rlim_max: cpu,
+                };
+                let r_mem = rlimit {
+                    rlim_cur: mem,
+                    rlim_max: mem,
+                };
+                if libc::setrlimit(RLIMIT_CPU, &r_cpu as *const _) != 0 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "sandbox_error:rlimit_set_failed",
+                    ));
+                }
+                if libc::setrlimit(RLIMIT_AS, &r_mem as *const _) != 0 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "sandbox_error:rlimit_set_failed",
+                    ));
+                }
                 Ok(())
             });
         }
     }
-    let mut child = cmd.spawn().map_err(|_e| anyhow!("sandbox_error:bwrap_exec_failed")).with_context(|| format!("spawn {:?} tool list", bin))?;
 
-    let mut out = child
-        .stdout
-        .take()
-        .ok_or_else(|| anyhow!("child stdout missing"))?;
-    let (tx, rx) = mpsc::sync_channel::<Result<String>>(1);
-    std::thread::spawn(move || {
-        let mut buf = String::new();
-        let res = out
-            .read_to_string(&mut buf)
-            .map(|_| buf)
-            .map_err(|e| anyhow!(e));
-        let _ = tx.send(res);
-    });
-    match rx.recv_timeout(timeout) {
-        Ok(s) => {
-            let s = s?;
-            let v: Value =
-                serde_json::from_str(s.trim()).context("devit tool list: invalid JSON")?;
-            Ok(v)
-        }
+    let mut child = cmd
+        .spawn()
+        .map_err(|_e| anyhow!("sandbox_error:bwrap_exec_failed"))
+        .with_context(|| format!("spawn {:?} tool list", bin))?;
+    let child_pid = child.id();
+
+    let stdout_rx = spawn_pipe_reader(
+        child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("child stdout missing"))?,
+    );
+    let stderr_rx = spawn_pipe_reader(
+        child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow!("child stderr missing"))?,
+    );
+
+    let stdout_text = match stdout_rx.recv_timeout(timeout) {
+        Ok(res) => res?,
         Err(_) => {
             let _ = child.kill();
             eprintln!("error: devit tool list timeout");
             std::process::exit(124);
         }
+    };
+
+    let stderr_text = match stderr_rx.recv_timeout(timeout) {
+        Ok(res) => match res {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("warn: capture devit tool list stderr failed: {e}");
+                String::new()
+            }
+        },
+        Err(_) => {
+            let _ = child.kill();
+            eprintln!("error: devit tool list timeout (stderr)");
+            std::process::exit(124);
+        }
+    };
+
+    let _ = child.wait();
+    maybe_dump_child_output(&cli.child_dump_dir, child_pid, &stdout_text, &stderr_text);
+
+    match parse_last_json_value(&stdout_text) {
+        Ok(Some(value)) => Ok(value),
+        Ok(None) => Err(ChildJsonError::new(stdout_text, stderr_text, "no_json").into()),
+        Err(err) => Err(ChildJsonError::new(stdout_text, stderr_text, err.to_string()).into()),
     }
 }
 
-fn run_devit_call_sandboxed(bin: &PathBuf, args_json: &Value, timeout: Duration, cli: &Cli) -> Result<Value> {
+fn run_devit_call_sandboxed(
+    bin: &PathBuf,
+    args_json: &Value,
+    timeout: Duration,
+    cli: &Cli,
+) -> Result<Value> {
     let mut cmd = if cli.sandbox.to_ascii_lowercase() == "bwrap" {
         let mut c = Command::new("bwrap");
         c.arg("--unshare-user");
-        if cli.net.to_ascii_lowercase() == "off" { c.arg("--unshare-net"); }
-        c.args(["--dev","/dev"]).args(["--proc","/proc"]).arg("--die-with-parent");
-        for p in ["/usr","/bin","/sbin","/lib","/lib64","/etc"].iter() {
-            if std::path::Path::new(p).exists() { c.args(["--ro-bind", p, p]); }
+        if cli.net.to_ascii_lowercase() == "off" {
+            c.arg("--unshare-net");
+        }
+        c.args(["--dev", "/dev"])
+            .args(["--proc", "/proc"])
+            .arg("--die-with-parent");
+        for p in ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"].iter() {
+            if std::path::Path::new(p).exists() {
+                c.args(["--ro-bind", p, p]);
+            }
         }
         if let Ok(cwd) = std::env::current_dir() {
             let p = cwd.to_string_lossy().to_string();
             c.args(["--bind", &p, &p]).args(["--chdir", &p]);
         }
-        c.arg("--").arg(bin.as_os_str()).arg("tool").arg("call").arg("-");
+        c.arg("--")
+            .arg(bin.as_os_str())
+            .arg("tool")
+            .arg("call")
+            .arg("-")
+            .arg("--json-only");
         c
     } else {
         let mut c = Command::new(bin);
-        c.arg("tool").arg("call").arg("-");
+        c.arg("tool").arg("call").arg("-").arg("--json-only");
         c
     };
-    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     #[cfg(unix)]
     if cli.sandbox.to_ascii_lowercase() == "none" {
         use libc::{rlimit, RLIMIT_AS, RLIMIT_CPU};
@@ -1835,15 +2627,35 @@ fn run_devit_call_sandboxed(bin: &PathBuf, args_json: &Value, timeout: Duration,
         let mem = (cli.mem_mb as u64) * 1024 * 1024;
         unsafe {
             cmd.pre_exec(move || {
-                let r_cpu = rlimit { rlim_cur: cpu, rlim_max: cpu };
-                let r_mem = rlimit { rlim_cur: mem, rlim_max: mem };
-                if libc::setrlimit(RLIMIT_CPU, &r_cpu as *const _) != 0 { return Err(std::io::Error::new(std::io::ErrorKind::Other, "sandbox_error:rlimit_set_failed")); }
-                if libc::setrlimit(RLIMIT_AS, &r_mem as *const _) != 0 { return Err(std::io::Error::new(std::io::ErrorKind::Other, "sandbox_error:rlimit_set_failed")); }
+                let r_cpu = rlimit {
+                    rlim_cur: cpu,
+                    rlim_max: cpu,
+                };
+                let r_mem = rlimit {
+                    rlim_cur: mem,
+                    rlim_max: mem,
+                };
+                if libc::setrlimit(RLIMIT_CPU, &r_cpu as *const _) != 0 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "sandbox_error:rlimit_set_failed",
+                    ));
+                }
+                if libc::setrlimit(RLIMIT_AS, &r_mem as *const _) != 0 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "sandbox_error:rlimit_set_failed",
+                    ));
+                }
                 Ok(())
             });
         }
     }
-    let mut child = cmd.spawn().map_err(|_e| anyhow!("sandbox_error:bwrap_exec_failed")).with_context(|| format!("spawn {:?} tool call -", bin))?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|_e| anyhow!("sandbox_error:bwrap_exec_failed"))
+        .with_context(|| format!("spawn {:?} tool call -", bin))?;
+    let child_pid = child.id();
 
     // write JSON to stdin
     {
@@ -1852,34 +2664,52 @@ fn run_devit_call_sandboxed(bin: &PathBuf, args_json: &Value, timeout: Duration,
             .take()
             .ok_or_else(|| anyhow!("child stdin missing"))?;
         let s = serde_json::to_string(args_json)?;
-        use std::io::Write as _;
         sin.write_all(s.as_bytes())?;
         sin.flush()?;
     }
-    let mut out = child
-        .stdout
-        .take()
-        .ok_or_else(|| anyhow!("child stdout missing"))?;
-    let (tx, rx) = mpsc::sync_channel::<Result<String>>(1);
-    std::thread::spawn(move || {
-        let mut buf = String::new();
-        let res = out
-            .read_to_string(&mut buf)
-            .map(|_| buf)
-            .map_err(|e| anyhow!(e));
-        let _ = tx.send(res);
-    });
-    match rx.recv_timeout(timeout) {
-        Ok(s) => {
-            let s = s?;
-            let v: Value =
-                serde_json::from_str(s.trim()).context("devit tool call: invalid JSON")?;
-            Ok(v)
-        }
+    let stdout_rx = spawn_pipe_reader(
+        child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("child stdout missing"))?,
+    );
+    let stderr_rx = spawn_pipe_reader(
+        child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow!("child stderr missing"))?,
+    );
+
+    let stdout_text = match stdout_rx.recv_timeout(timeout) {
+        Ok(res) => res?,
         Err(_) => {
             let _ = child.kill();
             eprintln!("error: devit tool call timeout");
             std::process::exit(124);
         }
+    };
+
+    let stderr_text = match stderr_rx.recv_timeout(timeout) {
+        Ok(res) => match res {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("warn: capture devit tool call stderr failed: {e}");
+                String::new()
+            }
+        },
+        Err(_) => {
+            let _ = child.kill();
+            eprintln!("error: devit tool call timeout (stderr)");
+            std::process::exit(124);
+        }
+    };
+
+    let _ = child.wait();
+    maybe_dump_child_output(&cli.child_dump_dir, child_pid, &stdout_text, &stderr_text);
+
+    match parse_last_json_value(&stdout_text) {
+        Ok(Some(value)) => Ok(value),
+        Ok(None) => Err(ChildJsonError::new(stdout_text, stderr_text, "no_json").into()),
+        Err(err) => Err(ChildJsonError::new(stdout_text, stderr_text, err.to_string()).into()),
     }
 }

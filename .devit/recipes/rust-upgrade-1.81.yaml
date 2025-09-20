@@ -1,0 +1,8 @@
+---
+id: rust-upgrade-1.81
+name: "Rust upgrade 1.81"
+description: "Guidance for upgrading the toolchain to Rust 1.81."
+steps:
+  - kind: shell
+    name: "Show rustup command"
+    run: "echo 'Run: rustup toolchain install 1.81.0 && rustup default 1.81.0'"

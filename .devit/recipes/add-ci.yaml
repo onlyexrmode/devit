@@ -1,0 +1,8 @@
+---
+id: add-ci
+name: "Add CI workflow"
+description: "Create a starter GitHub Actions CI workflow."
+steps:
+  - kind: shell
+    name: "Provide CI instructions"
+    run: "echo 'Add the CI workflow under .github/workflows/ci.yml'"

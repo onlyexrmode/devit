@@ -10,13 +10,15 @@ use devit_tools::{codeexec, git};
 mod commit_msg;
 mod merge_assist;
 mod precommit;
+mod recipes;
 mod report;
 mod test_runner;
 use hmac::{Hmac, Mac};
 use rand::RngCore;
+use recipes::{list_recipes, run_recipe, RecipeRunError};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::{stdin, Read, Write as _};
+use std::io::{stdin, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 mod context;
@@ -25,6 +27,8 @@ mod sbom;
 #[derive(Parser, Debug)]
 #[command(name = "devit", version, about = "DevIt CLI - patch-only agent", long_about = None)]
 struct Cli {
+    #[arg(long = "json-only", alias = "quiet-json", global = true)]
+    json_only: bool,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -79,6 +83,18 @@ enum Commands {
     Tool {
         #[command(subcommand)]
         action: ToolCmd,
+    },
+
+    /// Recipes runner
+    Recipe {
+        #[command(subcommand)]
+        action: RecipeCmd,
+    },
+
+    /// TUI helpers
+    Tui {
+        #[command(subcommand)]
+        action: TuiCmd,
     },
 
     /// Context utilities
@@ -174,6 +190,27 @@ enum ToolCmd {
         #[arg(long = "precommit-only")]
         precommit_only: bool,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum RecipeCmd {
+    /// List available recipes (JSON)
+    List,
+    /// Run a recipe by id
+    Run {
+        #[arg(value_name = "ID")]
+        id: String,
+        #[arg(long = "dry-run", default_value_t = false)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum TuiCmd {
+    /// Open a unified diff in the TUI
+    OpenDiff { path: String },
+    /// Open a journal log in the TUI
+    OpenLog { path: String },
 }
 
 #[derive(Subcommand, Debug)]
@@ -295,6 +332,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let cfg: Config = load_cfg("devit.toml").context("load config")?;
     let agent = Agent::new(cfg.clone());
+    let json_only = cli.json_only;
 
     match cli.command {
         Some(Commands::Suggest { path, goal }) => {
@@ -602,9 +640,11 @@ async fn main() -> Result<()> {
             ToolCmd::List => {
                 let tools = serde_json::json!([
                     {"name": "fs_patch_apply", "args": {"patch": "string", "mode": "index|worktree", "check_only": "bool"}, "description": "Apply unified diff (index/worktree), or --check-only"},
-                    {"name": "shell_exec", "args": {"cmd": "string"}, "description": "Execute command via sandboxed shell (safe-list)"}
+                    {"name": "shell_exec", "args": {"cmd": "string"}, "description": "Execute command via sandboxed shell (safe-list)"},
+                    {"name": "server.approve", "args": {"name": "string", "scope": "once|session|always", "plugin_id": "string?"}, "description": "Approve on-request tools (once/session/always)"}
                 ]);
-                println!("{}", serde_json::to_string_pretty(&tools).unwrap());
+                let payload = serde_json::json!({"tools": tools});
+                emit_json(&payload)?;
             }
             ToolCmd::Call {
                 name,
@@ -623,25 +663,50 @@ async fn main() -> Result<()> {
                     let yes_flag = req.get("yes").and_then(|v| v.as_bool()).unwrap_or(yes);
                     let res = tool_call_json(&cfg, tname, args, yes_flag);
                     match res {
-                        Ok(v) => println!(
-                            "{}",
-                            serde_json::to_string(&serde_json::json!({"ok": true, "result": v}))?
-                        ),
-                        Err(e) => println!(
-                            "{}",
-                            serde_json::to_string(
-                                &serde_json::json!({"ok": false, "error": e.to_string()})
-                            )?
-                        ),
+                        Ok(v) => emit_json(&serde_json::json!({"ok": true, "result": v}))?,
+                        Err(e) => emit_json(&serde_json::json!({
+                            "ok": false,
+                            "error": e.to_string()
+                        }))?,
                     }
                 } else {
-                    let out =
-                        tool_call_legacy(&cfg, &name, &input, yes, no_precommit, precommit_only);
+                    let out = tool_call_legacy(
+                        &cfg,
+                        &name,
+                        &input,
+                        yes,
+                        no_precommit,
+                        precommit_only,
+                        json_only,
+                    );
                     if let Err(e) = out {
                         anyhow::bail!(e);
                     }
                 }
             }
+        },
+        Some(Commands::Tui { action }) => match action {
+            TuiCmd::OpenDiff { path } => {
+                run_tui_command(&["--open", path.as_str()])?;
+            }
+            TuiCmd::OpenLog { path } => {
+                run_tui_command(&["--open-log", path.as_str()])?;
+            }
+        },
+        Some(Commands::Recipe { action }) => match action {
+            RecipeCmd::List => {
+                let recipes = list_recipes()?;
+                emit_json(&serde_json::json!({"recipes": recipes}))?;
+            }
+            RecipeCmd::Run { id, dry_run } => match run_recipe(&id, dry_run) {
+                Ok(report) => {
+                    emit_json(&serde_json::json!({"ok": true, "recipe": report}))?;
+                }
+                Err(RecipeRunError { payload, exit_code }) => {
+                    emit_json(&serde_json::json!({"type":"tool.error","payload": payload}))?;
+                    std::process::exit(exit_code);
+                }
+            },
         },
         Some(Commands::Context { action }) => match action {
             CtxCmd::Map {
@@ -814,22 +879,47 @@ async fn main() -> Result<()> {
         Some(Commands::Sbom { action }) => match action {
             SbomCmd::Gen { out } => {
                 let outp = std::path::Path::new(&out);
-                if let Some(dir) = outp.parent() { let _ = std::fs::create_dir_all(dir); }
+                if let Some(dir) = outp.parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
                 sbom::generate(outp)?;
                 println!("{}", out);
             }
         },
-        Some(Commands::FsPatchApply { json_input, commit, precommit, tests_impacted, attest_diff }) => {
+        Some(Commands::FsPatchApply {
+            json_input,
+            commit,
+            precommit,
+            tests_impacted,
+            attest_diff,
+        }) => {
             // Read JSON request (fs_patch_apply args) and merge CLI overrides
             let mut s = String::new();
-            if json_input == "-" || json_input == "@-" { stdin().read_to_string(&mut s)?; } else { s = std::fs::read_to_string(&json_input)?; }
-            let mut req: serde_json::Value = serde_json::from_str(&s).context("parse JSON input for fs_patch_apply")?;
+            if json_input == "-" || json_input == "@-" {
+                stdin().read_to_string(&mut s)?;
+            } else {
+                s = std::fs::read_to_string(&json_input)?;
+            }
+            let req: serde_json::Value =
+                serde_json::from_str(&s).context("parse JSON input for fs_patch_apply")?;
             // Accept both top-level args or raw args
-            let mut args = if let Some(a) = req.get("args").cloned() { a } else { req.clone() };
-            if let Some(v) = commit { args["commit"] = serde_json::Value::String(v); }
-            if let Some(v) = precommit { args["precommit"] = serde_json::Value::String(v); }
-            if let Some(v) = tests_impacted { args["tests_impacted"] = serde_json::Value::String(v); }
-            if attest_diff { args["attest_diff"] = serde_json::Value::Bool(true); }
+            let mut args = if let Some(a) = req.get("args").cloned() {
+                a
+            } else {
+                req.clone()
+            };
+            if let Some(v) = commit {
+                args["commit"] = serde_json::Value::String(v);
+            }
+            if let Some(v) = precommit {
+                args["precommit"] = serde_json::Value::String(v);
+            }
+            if let Some(v) = tests_impacted {
+                args["tests_impacted"] = serde_json::Value::String(v);
+            }
+            if attest_diff {
+                args["attest_diff"] = serde_json::Value::Bool(true);
+            }
             let out = tool_call_json(&cfg, "fs_patch_apply", args, true)?;
             println!("{}", serde_json::to_string(&out)?);
         }
@@ -904,6 +994,34 @@ fn default_commit_msg(goal: Option<&str>, summary: &str) -> String {
         Some(g) if !g.trim().is_empty() => format!("feat: {} ({})", g.trim(), summary),
         _ => format!("chore: apply patch ({})", summary),
     }
+}
+
+fn emit_json(value: &serde_json::Value) -> Result<()> {
+    let mut stdout = std::io::stdout().lock();
+    serde_json::to_writer(&mut stdout, value)?;
+    stdout.write_all(b"\n")?;
+    stdout.flush()?;
+    Ok(())
+}
+
+fn run_tui_command(args: &[&str]) -> Result<()> {
+    let mut candidate = std::env::current_exe()?;
+    candidate.set_file_name("devit-tui");
+
+    let status = if candidate.exists() {
+        std::process::Command::new(&candidate).args(args).status()
+    } else {
+        std::process::Command::new("devit-tui").args(args).status()
+    }
+    .with_context(|| format!("spawn devit-tui with args {:?}", args))?;
+
+    if !status.success() {
+        return Err(anyhow::anyhow!(
+            "devit-tui exited with status {}",
+            status.code().unwrap_or(-1)
+        ));
+    }
+    Ok(())
 }
 
 fn requires_approval_tool(policy: &PolicyCfg, tool: &str, yes_flag: bool, action: &str) -> bool {
@@ -1459,7 +1577,11 @@ fn tool_call_legacy(
     yes: bool,
     no_precommit: bool,
     precommit_only: bool,
+    json_only: bool,
 ) -> Result<()> {
+    if json_only {
+        anyhow::bail!("--json-only requires '-' as tool name with JSON stdin");
+    }
     match name {
         "fs_patch_apply" => {
             ensure_git_repo()?;
